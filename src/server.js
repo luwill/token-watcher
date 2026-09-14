@@ -6,6 +6,7 @@ import { extname, join, resolve, dirname } from 'node:path';
 import { WEB_DIR, ECHARTS_PATH, DB_PATH } from './config.js';
 import { learnWorkbuddyRates } from './rates.js';
 import { loadPricing, computeCosts, computeRecon } from './pricing.js';
+import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 
 const DB_DIRPATH = dirname(DB_PATH);
 
@@ -249,6 +250,9 @@ export function startServer({ store, scanner, balancePoller, port, log = () => {
     balancePoller.start();
   }
   scheduleBackup(store, log);
+  onPricesLoaded(notify);                          // 价格加载/刷新后推送前端
+  ensurePrices().catch(() => {});
+  setInterval(() => ensurePrices({ force: true }).catch(() => {}), 24 * 3600_000).unref?.();
   try { learnWorkbuddyRates(store); } catch { /* 首次静默 */ }
 
   const server = createServer(async (req, res) => {
