@@ -28,6 +28,10 @@ open http://127.0.0.1:8787
 
 要求：**Node ≥ 22.5**（内置 `node:sqlite`，零原生依赖）；dsh 源需要系统 `zstd`（`brew install zstd`，缺失自动跳过该源）。
 
+平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）；Linux 理论可用（Node 20+ 支持 recursive watch），未完整测试；Windows 未测试。菜单栏 App 为 macOS 专属。
+
+开发与测试：`npm test` 运行三层回归——语法检查、静态断言（渲染函数存在性/DOM id 一致性）、端到端冒烟（fixtures 黄金数字 + 幂等 + API 结构），零依赖、可跑在 CI。
+
 其他命令：
 
 ```bash

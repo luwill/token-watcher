@@ -71,3 +71,21 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 ## 不可统计的边界
 
 网页版聊天（ChatGPT/豆包/DeepSeek 网页、Grok Bot 等 Electron 薄壳）：token 计数在服务端，浏览器本地零留痕（实测 IndexedDB 无 usage 字段），且无公开用量 API。除非厂商开放 API 或用户接受浏览器扩展拦截（高维护成本、随改版失效），否则不可覆盖。
+
+
+## ECharts calendar + custom series 的三个坑（实踩记录，2026-09）
+
+在"GitHub 风格正方形热力图"上连续翻车的根因，贡献者改热力图前必读：
+
+1. **`renderItem` 返回 `roundRect` 会抛空错误**（消息为空字符串，且被 ECharts 吞掉，
+   图表整片空白、无 console 线索）——此构建只支持 `rect`；
+2. **calendar 同时给定 `top` 与 `bottom` 时，`cellSize` 高度被归一为 `auto`**，
+   行距 = 可用高度 ÷ 行数。容器高度必须精确等于 `top + 7×cell + bottom`，
+   多 1px 都会被摊进行距导致栅格不对称（同理 `left`+`right` 会拉宽格子）；
+3. **custom series 元素的鼠标命中检测不可靠**：`dispatchAction showTip` 正常但真实
+   mousemove 不触发。解决：容器监听 mousemove + `convertFromPixel` 反查日期 +
+   半格命中校验的自管理 tooltip（见 `bindHeatTooltip`）。
+
+相关回归防护：`test/run.mjs` 的静态断言层（safe() 调用的函数必须存在、DOM id 一致性）
+与端到端冒烟层（fixtures 黄金数字、幂等、API 结构）。历史事故：误删 renderLive 导致
+整页空白、roundRect 导致热力图消失——均已由测试覆盖。
