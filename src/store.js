@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { normalizeModel } from './models.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -78,12 +79,12 @@ function migrate(db) {
   // v2 模型归一：大小写变体合并（GLM-5.3-Flash → glm-5.3-flash）
   const upd = db.prepare('UPDATE events SET model = ? WHERE model = ?');
   for (const r of db.prepare('SELECT DISTINCT model FROM events WHERE model IS NOT NULL').all()) {
-    const n = typeof r.model === 'string' ? r.model.trim().toLowerCase() : r.model;
+    const n = normalizeModel(r.model);
     if (n && n !== r.model) upd.run(n, r.model);
   }
   const updRates = db.prepare('UPDATE rates SET model = ? WHERE model = ?');
   for (const r of db.prepare('SELECT DISTINCT model FROM rates').all()) {
-    const n = typeof r.model === 'string' ? r.model.trim().toLowerCase() : r.model;
+    const n = normalizeModel(r.model);
     if (n && n !== r.model) {
       try { updRates.run(n, r.model); } catch { /* 归一后与既有键冲突：保留旧行，下次学习覆盖 */ }
     }
