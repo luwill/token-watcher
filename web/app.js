@@ -58,17 +58,20 @@ function render() {
     .map(([v, l]) => `<div class="card"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('gen').textContent = `更新于 ${new Date(s.generated_at).toLocaleString('zh-CN')}`;
 
-  renderQuota(s.quota.codex, s.quota.claude5h);
-  renderBalances(s.balances, s.wb_rates, s.recon, s.costs);
-  renderHealth(s.health);
-  renderLive(s.live);
-  renderToolActivity();
-  loadSessions();
-  renderTrend(s.by_day);
-  renderModel(s.by_model);
-  renderTool(s.by_tool);
-  renderHeatmap(s.by_day_all);
-  renderFeed(s.recent);
+  // 各组件独立容错：单个失败不连坐整页，错误记录便于排查
+  window.__renderErr = [];
+  const safe = (name, fn) => { try { fn(); } catch (e) { window.__renderErr.push(name + ': ' + e.message); } };
+  safe('status', () => renderStatus(s.quota, s.balances, s.wb_rates, s.recon, s.costs));
+  safe('health', () => renderHealth(s.health));
+  safe('live', () => renderLive(s.live));
+  safe('trend', () => renderTrend(s.by_day));
+  safe('costday', () => renderCostDay(s.costs?.by_day));
+  safe('model', () => renderModel(s.by_model));
+  safe('tool', () => renderTool(s.by_tool));
+  safe('heat', () => renderHeatmap(s.by_day_all));
+  safe('feed', () => renderFeed(s.recent));
+  safe('toolsAct', () => renderToolActivity());
+  safe('sessions', () => loadSessions());
 }
 
 function renderStatus(quota, balances, rates, recon, costs) {
@@ -191,69 +194,6 @@ function renderCostDay(byDay) {
 }
 
 /** 厂商余额卡（含对账行）+ 成本卡 + WorkBuddy 自学习费率卡（动态注入 quota 网格） */
-function renderBalances(balances, rates, recon, costs) {
-  const host = document.getElementById('quota-extra');
-  if (!host) return;
-  const ago = (ts) => {
-    if (!ts) return '无数据';
-    const m = Math.floor((Date.now() - ts) / 60000);
-    if (m < 60) return `${m} 分钟前`;
-    if (m < 1440) return `${Math.floor(m / 60)} 小时前`;
-    return `${Math.floor(m / 1440)} 天前`;
-  };
-  let html = '';
-  for (const b of balances || []) {
-    const rc = (recon || []).find(r => r.id === b.id);
-    let reconLine = '';
-    if (rc && rc.delta != null && rc.spend != null) {
-      const d = rc.delta.toFixed(2), sp = rc.spend.toFixed(2);
-      const okBadge = Math.abs(rc.delta + rc.spend) < Math.max(1, rc.spend * 0.3) ? '✓' : '⚠';
-      reconLine = `<div class="recon dim">${okBadge} ${rc.hours}h 余额 ${d} ¥ vs 统计 ${-sp} ¥</div>`;
-    }
-    html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">${b.provider} 余额</span>
-        <span class="q-reset">${b.currency || ''}</span></div>
-      <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">¥ ${Number(b.balance).toFixed(2)}</span>
-        <span class="dim">${new Date(b.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新</span>
-      </div>
-      ${reconLine}
-    </div>`;
-  }
-  if (costs && (costs.today_cny > 0 || costs.all_cny > 0)) {
-    const chips = (costs.by_tool || []).slice(0, 4)
-      .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · ');
-    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${costs.unpriced.join(', ')}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
-    html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
-        <span class="q-reset">USD×${costs.usd_to_cny}</span></div>
-      <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
-        <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
-      </div>
-      <div class="recon dim" title="${chips}">${chips}</div>
-      <div class="recon dim" style="margin-top:2px">ccmr 为实付 · 订阅工具为 API 等值成本</div>
-      ${unpriced}
-    </div>`;
-  }
-  if (rates?.length) {
-    const rows = rates.map(r => `<tr>
-      <td>${r.model}</td>
-      <td>${r.fresh_rate.toFixed(1)}</td>
-      <td class="dim">${r.cache_rate.toFixed(1)}</td>
-      <td>${r.out_rate.toFixed(1)}</td>
-      <td class="dim">${r.turns}</td>
-    </tr>`).join('');
-    html += `<div class="quota-card rates-card">
-      <div class="quota-head"><span class="q-title">WorkBuddy 积分费率（自学习）</span>
-        <span class="q-reset">积分/百万 token</span></div>
-      <table class="rates-table"><thead><tr><th>模型</th><th>输入</th><th>缓存</th><th>输出</th><th>样本</th></tr></thead>
-      <tbody>${rows}</tbody></table>
-    </div>`;
-  }
-  host.innerHTML = html;
-}
-
 /** 进行中会话指示（如 Grok 轮次未结束时的实时上下文水位） */
 function renderLive(live) {
   const host = document.getElementById('health');
