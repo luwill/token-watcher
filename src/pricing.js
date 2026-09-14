@@ -68,7 +68,7 @@ function priceOf(model, table, rate) {
   return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate };
 }
 
-export async function computeCosts(db) {
+export async function computeCosts(db, days = 30) {
   const pricing = await loadPricing();
   const rate = pricing.usd_to_cny || 7.2;
   const table = pricing.models || {};
@@ -106,7 +106,26 @@ export async function computeCosts(db) {
   const all = agg(0);
   const today = agg(dayStart.getTime());
   const last7 = agg(Date.now() - 7 * 86_400_000);
+
+  // 按天 × 模型成本（供"按天花费"堆叠柱形图）
+  const rangeStart = days > 0 ? dayStart.getTime() - (days - 1) * 86_400_000 : 0;
+  const dayRows = db.prepare(`
+    SELECT date(ts/1000, 'unixepoch', 'localtime') d, model,
+           SUM(input_tokens) fi, SUM(cached_input) ci, SUM(cache_write) cw, SUM(output_tokens) oi
+    FROM events WHERE ts >= ? GROUP BY d, model ORDER BY d`).all(rangeStart);
+  const byDayMap = new Map();
+  for (const r of dayRows) {
+    const p = priceOf(r.model, table, rate);
+    if (!p) continue;
+    const c = (r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
+      + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny;
+    if (!byDayMap.has(r.d)) byDayMap.set(r.d, { day: r.d, models: {}, total: 0 });
+    const e = byDayMap.get(r.d);
+    e.models[r.model] = (e.models[r.model] || 0) + c;
+    e.total += c;
+  }
   return {
+    by_day: [...byDayMap.values()],
     today_cny: today.cny,
     last7d_cny: last7.cny,
     all_cny: all.cny,

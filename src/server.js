@@ -193,7 +193,7 @@ export async function buildSummary(store, scannerStats, days) {
       if (!q || Date.now() - q.ts > 10 * 60_000) return null; // 10 分钟无写入视为已结束
       return { ...q.data, ts: q.ts };
     })() },
-    costs: await computeCosts(db),
+    costs: await computeCosts(db, days),
     recon: computeRecon(db, store, await loadPricing()),
     recent,
   };

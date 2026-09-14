@@ -12,7 +12,7 @@ let heatMode = 'd';
 let lastSummary = null;
 
 const charts = {};
-for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail']]) {
+for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday']]) {
   const el = document.getElementById(id);
   if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
 }
@@ -71,33 +71,123 @@ function render() {
   renderFeed(s.recent);
 }
 
-function renderQuota(q, c5) {
-  const el = (id) => document.getElementById(id);
-  // Codex 配额
-  if (!q) {
-    el('q-plan').textContent = '';
-    el('q-reset').textContent = '暂无配额数据（启动 Codex 后自动出现）';
-    el('q-fill').style.width = '0%';
-    el('q-pct').textContent = '--';
-    el('q-countdown').dataset.at = '';
-  } else {
+function renderStatus(quota, balances, rates, recon, costs) {
+  const host = document.getElementById('quota-extra');
+  if (!host) return;
+  let html = '';
+
+  // Codex 周配额
+  const q = quota?.codex;
+  if (q) {
     const d = q.data;
-    el('q-plan').textContent = d.plan_type ? `${d.plan_type}` : '';
-    el('q-reset').textContent = d.window_minutes ? `${(d.window_minutes / 1440).toFixed(0)} 天窗口` : '';
-    el('q-fill').style.width = (d.used_percent ?? 0) + '%';
-    el('q-pct').textContent = `已用 ${(d.used_percent ?? 0).toFixed(1)}%`;
-    el('q-countdown').dataset.at = d.resets_at || '';
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">Codex 周配额</span>
+        <span class="q-plan">${d.plan_type ?? ''}</span>
+        <span class="q-reset">${d.window_minutes ? (d.window_minutes / 1440).toFixed(0) + ' 天窗口' : ''}</span></div>
+      <div class="q-bar"><div class="q-fill" style="width:${(d.used_percent ?? 0)}%"></div></div>
+      <div class="q-meta"><span>已用 ${(d.used_percent ?? 0).toFixed(1)}%</span>
+        <span class="dim">重置 <b class="cd" data-at="${d.resets_at ?? ''}">--</b></span></div>
+    </div>`;
   }
-  // Claude 5h 窗口（推算）
-  if (!c5 || !c5.active) {
-    el('c5-calls').textContent = '当前无活跃窗口';
-    el('c5-tokens').textContent = '--';
-    el('c5-countdown').dataset.at = '';
-  } else {
-    el('c5-calls').textContent = `${c5.window_calls} 次调用`;
-    el('c5-tokens').textContent = fmt(c5.window_tokens);
-    el('c5-countdown').dataset.at = Math.floor(c5.window_ends_at / 1000) || '';
+
+  // Claude 5h 窗口
+  const c5 = quota?.claude5h;
+  if (c5 && c5.active) {
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">Claude 5h 窗口</span><span class="q-plan cc">推算</span>
+        <span class="q-reset">${c5.window_calls} 次调用</span></div>
+      <div class="q-meta" style="margin-top:2px">
+        <span style="font-size:20px;font-weight:650">${fmt(c5.window_tokens)}</span>
+        <span class="dim">剩余 <b class="cd" data-at="${Math.floor(c5.window_ends_at / 1000)}">--</b></span>
+      </div>
+    </div>`;
   }
+
+  // 厂商余额（含对账）
+  for (const b of balances || []) {
+    const rc = (recon || []).find(r => r.id === b.id);
+    let reconLine = '';
+    if (rc && rc.delta != null && rc.spend != null) {
+      const ok = Math.abs(rc.delta + rc.spend) < Math.max(1, rc.spend * 0.3) ? '✓' : '⚠';
+      reconLine = `<div class="recon dim">${ok} ${rc.hours}h 余额 ${rc.delta.toFixed(2)} ¥ vs 统计 ${-rc.spend.toFixed(2)} ¥</div>`;
+    }
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">${b.provider} 余额</span>
+        <span class="q-reset">${b.currency || ''}</span></div>
+      <div class="q-meta" style="margin-top:2px">
+        <span style="font-size:20px;font-weight:650">¥ ${Number(b.balance).toFixed(2)}</span>
+        <span class="dim">${new Date(b.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新</span>
+      </div>
+      ${reconLine}
+    </div>`;
+  }
+
+  // API 花费
+  if (costs && (costs.today_cny > 0 || costs.all_cny > 0)) {
+    const chips = (costs.by_tool || []).slice(0, 4)
+      .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · ');
+    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${costs.unpriced.join(', ')}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
+        <span class="q-reset">USD×${costs.usd_to_cny}</span></div>
+      <div class="q-meta" style="margin-top:2px">
+        <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
+        <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
+      </div>
+      <div class="recon dim" title="${chips}">${chips}</div>
+      <div class="recon dim" style="margin-top:2px">ccmr 为实付 · 订阅工具为 API 等值成本</div>
+      ${unpriced}
+    </div>`;
+  }
+
+  // WorkBuddy 费率
+  if (rates?.length) {
+    const rows = rates.map(r => `<tr>
+      <td>${r.model}</td><td>${r.fresh_rate.toFixed(1)}</td>
+      <td class="dim">${r.cache_rate.toFixed(1)}</td><td>${r.out_rate.toFixed(1)}</td><td class="dim">${r.turns}</td>
+    </tr>`).join('');
+    html += `<div class="quota-card rates-card">
+      <div class="quota-head"><span class="q-title">WorkBuddy 积分费率（自学习）</span>
+        <span class="q-reset">积分/百万 token</span></div>
+      <table class="rates-table"><thead><tr><th>模型</th><th>输入</th><th>缓存</th><th>输出</th><th>样本</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+  }
+  host.innerHTML = html;
+}
+
+/** 按天花费（模型堆叠柱形图） */
+const MODEL_PALETTE = ['#e07a5f', '#34c98e', '#5aa9e6', '#f2c14e', '#8b7cf6', '#f78fb3', '#4ea8de', '#e6edf3'];
+function renderCostDay(byDay) {
+  if (!charts.costday || !byDay?.length) return;
+  const modelSet = new Set();
+  for (const d of byDay) Object.keys(d.models).forEach(m => modelSet.add(m));
+  const models = [...modelSet].sort((a, b) => {
+    const ta = byDay.reduce((s, d) => s + (d.models[a] || 0), 0);
+    const tb = byDay.reduce((s, d) => s + (d.models[b] || 0), 0);
+    return tb - ta;
+  }).slice(0, 7);
+  charts.costday.setOption({
+    animationDuration: 300,
+    grid: { left: 50, right: 12, top: 14, bottom: 46 },
+    tooltip: {
+      trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
+      valueFormatter: (v) => '¥' + (v || 0).toFixed(2),
+    },
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0 },
+    xAxis: {
+      type: 'category', data: byDay.map(d => d.day.slice(5)),
+      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 11 },
+      axisLine: { lineStyle: { color: '#262636' } },
+    },
+    yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
+    series: models.map((m, i) => ({
+      name: m, type: 'bar', stack: 'c',
+      data: byDay.map(d => +(d.models[m] || 0).toFixed(4)),
+      itemStyle: { color: MODEL_PALETTE[i % MODEL_PALETTE.length] },
+      barMaxWidth: 22,
+    })),
+  }, true);
 }
 
 /** 厂商余额卡（含对账行）+ 成本卡 + WorkBuddy 自学习费率卡（动态注入 quota 网格） */
@@ -440,8 +530,9 @@ function renderHeatmap(byDayAll) {
   const nWeeks = Math.max(1, Math.ceil((new Date(end) - new Date(start)) / 864e5 / 7) + 1);
   const availW = (host.clientWidth || 900) - 14; // left 14
   const cell = Math.max(7, Math.min(20, Math.floor(availW / nWeeks)));
-  // ECharts 描边在横向比纵向多吃 ~3px，按实测 0.84 补偿使可见区域为正方形
-  const cellH = Math.max(6, Math.round(cell * 0.84));
+  const border = Math.max(1, Math.round(cell * 0.14));
+  // ECharts 描边横向多吃 border、纵向吃 ~1px：高度按差值补偿，可见区域为正方形
+  const cellH = Math.max(6, cell - border);
   const hostH = cellH * 7 + 40;                  // 7 行 + 顶部 6 + 月份标签 ~34
   host.style.height = hostH + 'px';
   charts.heat.resize();
@@ -462,7 +553,7 @@ function renderHeatmap(byDayAll) {
       left: 14, top: 6, bottom: 26,   // 不指定 right：同时给 left+right 时 ECharts 会把格子横向拉满，破坏正方形
       cellSize: [cell, cellH],         // 按实测比例补偿，保证可见格子为正方形
       splitLine: { show: false },
-      itemStyle: { color: HEAT_EMPTY, borderWidth: 0, borderRadius: 2 },
+      itemStyle: { color: HEAT_EMPTY, borderWidth: border, borderColor: '#14141c', borderRadius: 2 },
       yearLabel: { show: false },
       monthLabel: {
         position: 'end', color: '#8a8aa0', fontSize: 11,
@@ -475,7 +566,7 @@ function renderHeatmap(byDayAll) {
       type: 'heatmap',
       coordinateSystem: 'calendar',
       // 圆角格子 + 与面板同色的描边形成间隙（正方形下四周间隙均匀）
-      itemStyle: { borderRadius: Math.max(2, Math.round(cell * 0.2)), borderColor: '#14141c', borderWidth: Math.max(1, Math.round(cell * 0.14)) },
+      itemStyle: { borderRadius: Math.max(2, Math.round(cell * 0.2)), borderColor: '#14141c', borderWidth: border },
       data,
     }],
   }, true);
