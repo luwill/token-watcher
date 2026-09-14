@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenMeter</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg?v=2">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon.png?v=2">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=2">
+<link rel="stylesheet" href="style.css">
+<script src="/vendor/echarts.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg class="logo" width="22" height="22" viewBox="0 0 64 64" aria-hidden="true">
+      <defs>
+        <linearGradient id="logoBg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#20283a"/>
+          <stop offset="1" stop-color="#0d1117"/>
+        </linearGradient>
+        <linearGradient id="logoRing" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#39d353"/>
+          <stop offset="1" stop-color="#e0b34c"/>
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#logoBg)" stroke="#2f3a4e" stroke-width="2"/>
+      <circle cx="32" cy="32" r="14" fill="none" stroke="#232b3a" stroke-width="7"/>
+      <path d="M32 18 A14 14 0 1 1 18 32" fill="none" stroke="url(#logoRing)" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="32" cy="32" r="4.5" fill="#39d353"/>
+    </svg>
+    <h1>TokenMeter</h1>
+    <span id="live" class="live off" title="实时连接状态"><i></i>实时</span>
+  </div>
+  <nav id="range" class="range">
+    <button data-days="7" class="on">7 天</button>
+    <button data-days="30">30 天</button>
+    <button data-days="90">90 天</button>
+    <button data-days="0">全部</button>
+    <button id="export-btn" title="导出当前范围日粒度 CSV">导出 CSV</button>
+  </nav>
+</header>
+
+<main>
+  <section class="cards" id="cards"></section>
+
+  <section class="quota">
+    <div class="quota-card">
+      <div class="quota-head">
+        <span class="q-title">Codex 周配额</span>
+        <span class="q-plan" id="q-plan"></span>
+        <span class="q-reset" id="q-reset"></span>
+      </div>
+      <div class="q-bar"><div class="q-fill" id="q-fill"></div></div>
+      <div class="q-meta"><span id="q-pct"></span><span class="dim">重置倒计时 <b class="cd" id="q-countdown">--</b></span></div>
+    </div>
+    <div class="quota-card">
+      <div class="quota-head">
+        <span class="q-title">Claude 5h 窗口</span>
+        <span class="q-plan cc">推算</span>
+        <span class="q-reset" id="c5-calls"></span>
+      </div>
+      <div class="q-meta" style="margin-top:2px">
+        <span id="c5-tokens" style="font-size:20px;font-weight:650">--</span>
+        <span class="dim">窗口剩余 <b class="cd" id="c5-countdown">--</b></span>
+      </div>
+    </div>
+    <div class="quota-note dim">Token 总量含缓存命中（cache read）· Claude 窗口为 session-blocks 推算口径（订阅限速无官方数值）· 余额每 30 分钟轮询 ~/.ccmr/.env 配置的厂商</div>
+  </section>
+  <div id="quota-extra" class="quota-extra"></div>
+
+  <section class="health" id="health"></section>
+
+  <section class="panel heat">
+    <h2>Token 活动<span class="heat-modes"><button id="hm-d" class="on">每日</button><button id="hm-w">每周</button><button id="hm-c">累计</button></span></h2>
+    <div id="ch-heat" class="chart heat-chart"></div>
+    <div class="heat-legend" id="heat-legend"></div>
+  </section>
+
+  <section class="charts">
+    <div class="panel span2"><h2>按天消耗（按工具堆叠，点击某天查看会话）</h2><div id="ch-trend" class="chart"></div></div>
+    <div class="panel"><h2>模型 Top 10</h2><div id="ch-model" class="chart"></div></div>
+    <div class="panel span2" id="sessions-panel">
+      <h2>会话钻取 <span class="dim" style="font-weight:400" id="sess-day"></span>
+        <input type="date" id="sess-date" style="float:right;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px">
+      </h2>
+      <div id="sess-detail" class="chart" style="display:none;height:180px"></div>
+      <div class="feed" id="sessions"></div>
+    </div>
+    <div class="panel"><h2>工具活动 <span class="dim" style="font-weight:400">近30天</span></h2><div id="ch-tools-act" class="chart"></div></div>
+    <div class="panel span2"><h2>最近请求</h2><div class="feed" id="feed"></div></div>
+    <div class="panel"><h2>工具分布</h2><div id="ch-tool" class="chart"></div></div>
+  </section>
+
+  <footer class="dim">数据源：Claude Code · ccmr · Codex · ZCode · dsh · WorkBuddy · Grok Build ｜ 本地解析，实时监听 ｜ <span id="gen"></span></footer>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+bin/token-stats-bar
+bin/token-stats-bar.app/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+*.log

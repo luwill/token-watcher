@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20283a"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="ringB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#39d353"/>
+      <stop offset="1" stop-color="#e0b34c"/>
+    </linearGradient>
+  </defs>
+  <!-- 版本 B：配额圆环 · 量规隐喻 -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bgB)" stroke="#2f3a4e" stroke-width="2"/>
+  <circle cx="32" cy="32" r="14" fill="none" stroke="#232b3a" stroke-width="7"/>
+  <!-- 75% 进度弧：12 点起顺时针 270° -->
+  <path d="M32 18 A14 14 0 1 1 18 32" fill="none" stroke="url(#ringB)" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="4.5" fill="#39d353"/>
+</svg>
