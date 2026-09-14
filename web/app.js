@@ -453,6 +453,49 @@ const HEAT_EMPTY = '#1b1b24';function heatData(byDayAll) {
   return [...dayMap.entries()];
 }
 
+/**
+ * 自管理 tooltip：custom series 的鼠标命中检测不可靠（实测 mousemove 不触发），
+ * 改为容器 mousemove + convertFromPixel 反查日期；命中校验=光标落在格子中心半格内。
+ */
+function bindHeatTooltip(host, dayMap, cell) {
+  host.__heatData = dayMap;
+  host.__heatCell = cell;
+  if (host.__tipBound) return;
+  host.__tipBound = true;
+  let tip = document.createElement('div');
+  tip.className = 'heat-tip';
+  document.body.appendChild(tip);
+  const labelOf = () => heatMode === 'w' ? '所在周' : heatMode === 'c' ? '累计至当日' : '当日';
+  host.addEventListener('mousemove', (e) => {
+    const rect = host.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    let d = null, v = null;
+    try {
+      const ts = charts.heat.convertFromPixel({ calendarIndex: 0 }, [x, y]);
+      if (Number.isFinite(ts)) {
+        const dt = new Date(ts);
+        const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        // 命中校验：反查日期的格子中心须在光标半格范围内（排除标签/空白区误报）
+        const pix = charts.heat.convertToPixel({ calendarIndex: 0 }, key);
+        if (pix && Math.abs(pix[0] - x) <= host.__heatCell / 2 && Math.abs(pix[1] - y) <= host.__heatCell / 2) {
+          d = key;
+          v = host.__heatData.get(key) || 0;
+        }
+      }
+    } catch { /* 图表未就绪 */ }
+    if (!d) { tip.style.display = 'none'; return; }
+    tip.innerHTML = `${d}<br>${v > 0 ? labelOf() + ' ' + fmt(v) + ' tokens' : '无用量'}`;
+    tip.style.display = 'block';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let tx = e.clientX + 12, ty = e.clientY - th - 10;
+    if (tx + tw > window.innerWidth - 8) tx = e.clientX - tw - 12;
+    if (ty < 8) ty = e.clientY + 14;
+    tip.style.left = tx + 'px';
+    tip.style.top = ty + 'px';
+  });
+  host.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
 function renderHeatmap(byDayAll) {
   if (!byDayAll?.length) return;
   // GitHub 惯例：固定显示近一年；custom series 精确绘制，栅格间距横竖严格一致
@@ -491,15 +534,6 @@ function renderHeatmap(byDayAll) {
 
   charts.heat.setOption({
     animationDuration: 300,
-    tooltip: {
-      backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (p) => {
-        const v = p.value[1];
-        const label = heatMode === 'w' ? '所在周' : heatMode === 'c' ? '累计至当日' : '当日';
-        return `${p.value[0]}<br/>${v > 0 ? label + ' ' + fmt(v) + ' tokens' : '无用量'}`;
-      },
-      position: 'top',
-    },
     calendar: {
       range: [start, end],
       left: 14, top: 6, bottom: 26,
@@ -527,6 +561,7 @@ function renderHeatmap(byDayAll) {
       data,
     }],
   }, true);
+  bindHeatTooltip(host, dayMap, cell);
   // 底部图例色条
   const legend = document.getElementById('heat-legend');
   if (legend) {
