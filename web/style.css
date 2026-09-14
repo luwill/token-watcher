@@ -77,6 +77,9 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .feed { max-height: 260px; overflow: auto; }
 .sess-row:hover td { background: #1a1a25; }
 #sessions { max-height: 300px; }
+#sessions td, #sessions th { white-space: nowrap; }
+#sessions td.ellip { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+#sessions td.ellip-sm { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; color: var(--dim); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
 td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: tabular-nums; }

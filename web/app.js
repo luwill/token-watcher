@@ -308,10 +308,10 @@ async function loadSessions(day) {
     host.innerHTML = `<table>
       <thead><tr><th>时间段</th><th>工具</th><th>模型</th><th>项目</th><th>tokens</th><th>调用</th><th>峰值上下文(估)</th></tr></thead>
       <tbody>${sessions.map(s => `<tr class="sess-row" data-sid="${s.session_id}">
-        <td class="dim">${hh(s.first_ts)}–${hh(s.last_ts)}</td>
+        <td class="dim" style="font-variant-numeric:tabular-nums">${hh(s.first_ts)}–${hh(s.last_ts)}</td>
         <td><span class="badge ${s.tool}">${TOOL_LABEL[s.tool] || s.tool}</span></td>
-        <td>${(s.models || '').split(',').filter(Boolean).slice(0, 2).join(', ')}</td>
-        <td class="dim">${s.project || '-'}</td>
+        <td class="ellip" title="${(s.models || '').split(',').filter(Boolean).join(', ')}">${(s.models || '').split(',').filter(Boolean).slice(0, 2).join(', ') || '-'}</td>
+        <td class="dim ellip-sm" title="${s.project || ''}">${s.project || '-'}</td>
         <td>${fmt(s.total)}</td>
         <td>${s.calls}</td>
         <td>${fmt(s.peak)}</td>
