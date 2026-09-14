@@ -455,58 +455,72 @@ const HEAT_EMPTY = '#1b1b24';function heatData(byDayAll) {
 
 function renderHeatmap(byDayAll) {
   if (!byDayAll?.length) return;
-  const data = heatData(byDayAll);
-  const first = byDayAll[0].d;
-  const last = byDayAll[byDayAll.length - 1].d;
-  const max = Math.max(...data.map(x => x[1]), 1);
-
-  // GitHub 惯例：固定显示近一年（约 53 周铺满宽度，早期无数据为空格）；格子强制正方形
+  // GitHub 惯例：固定显示近一年；custom series 精确绘制，栅格间距横竖严格一致
   const host = document.getElementById('ch-heat');
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const yearAgo = new Date(today.getTime() - 364 * 864e5);
   const start = `${yearAgo.getFullYear()}-${String(yearAgo.getMonth() + 1).padStart(2, '0')}-${String(yearAgo.getDate()).padStart(2, '0')}`;
   const end = byDayAll[byDayAll.length - 1].d;
+
   const nWeeks = Math.max(1, Math.ceil((new Date(end) - new Date(start)) / 864e5 / 7) + 1);
-  const availW = (host.clientWidth || 900) - 14; // left 14
-  const cell = Math.max(7, Math.min(20, Math.floor(availW / nWeeks)));
-  const border = Math.max(1, Math.round(cell * 0.14));
-  // ECharts 描边横向多吃 border、纵向吃 ~1px：高度按差值补偿，可见区域为正方形
-  const cellH = Math.max(6, cell - border);
-  const hostH = cellH * 7 + 40;                  // 7 行 + 顶部 6 + 月份标签 ~34
+  const availW = (host.clientWidth || 900) - 14;
+  const cell = Math.max(8, Math.min(18, Math.floor(availW / nWeeks))); // 栅格步长（横竖同值）
+  const gap = Math.max(2, Math.round(cell * 0.2));
+  const hostH = cell * 7 + 40;
   host.style.height = hostH + 'px';
   charts.heat.resize();
+
+  // 全日期序列（含无数据日，作为最深色阶），GitHub 式分档着色
+  const dayMap = new Map(byDayAll.map(r => [r.d, r.total]));
+  const data = [];
+  for (let dt = new Date(start + 'T00:00:00'); dt <= new Date(end + 'T00:00:00'); dt.setDate(dt.getDate() + 1)) {
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    data.push([key, dayMap.get(key) || 0]);
+  }
+  const max = Math.max(...data.map(x => x[1]), 1);
+  const STOPS = [HEAT_EMPTY, ...HEAT_COLORS];
+  const colorOf = (v) => {
+    if (v <= 0) return HEAT_EMPTY;
+    const r = v / max;
+    const idx = r <= 0.15 ? 1 : r <= 0.35 ? 2 : r <= 0.6 ? 3 : r <= 0.85 ? 4 : 5;
+    return STOPS[idx];
+  };
 
   charts.heat.setOption({
     animationDuration: 300,
     tooltip: {
       backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (p) => `${p.value[0]}<br/>${heatMode === 'w' ? '所在周' : heatMode === 'c' ? '累计至当日' : '当日'} ${fmt(p.value[1])} tokens`,
+      formatter: (p) => {
+        const v = p.value[1];
+        const label = heatMode === 'w' ? '所在周' : heatMode === 'c' ? '累计至当日' : '当日';
+        return `${p.value[0]}<br/>${v > 0 ? label + ' ' + fmt(v) + ' tokens' : '无用量'}`;
+      },
       position: 'top',
-    },
-    visualMap: {
-      type: 'continuous', min: 0, max, show: false,
-      inRange: { color: HEAT_COLORS },
     },
     calendar: {
       range: [start, end],
-      left: 14, top: 6, bottom: 26,   // 不指定 right：同时给 left+right 时 ECharts 会把格子横向拉满，破坏正方形
-      cellSize: [cell, cellH],         // 按实测比例补偿，保证可见格子为正方形
+      left: 14, top: 6, bottom: 26,
+      cellSize: [cell, cell],           // 横竖同一步长：栅格天然正方形
       splitLine: { show: false },
-      itemStyle: { color: HEAT_EMPTY, borderWidth: border, borderColor: '#14141c', borderRadius: 2 },
+      itemStyle: { color: 'rgba(0,0,0,0)', borderWidth: 0 }, // 底格透明，统一由 custom 绘制
       yearLabel: { show: false },
-      monthLabel: {
-        position: 'end', color: '#8a8aa0', fontSize: 11,
-        nameMap: 'cn',
-        formatter: (p) => p.nameMap || `${p.MM}月`, // 参数为 {yyyy, MM, M, nameMap}
-      },
+      monthLabel: { position: 'end', color: '#8a8aa0', fontSize: 11, nameMap: 'cn',
+        formatter: (p) => p.nameMap || `${p.MM}月` },
       dayLabel: { show: false },
     },
     series: [{
-      type: 'heatmap',
+      type: 'custom',
       coordinateSystem: 'calendar',
-      // 圆角格子 + 与面板同色的描边形成间隙（正方形下四周间隙均匀）
-      itemStyle: { borderRadius: Math.max(2, Math.round(cell * 0.2)), borderColor: '#14141c', borderWidth: border },
+      renderItem: (params, api) => {
+        const p = api.coord(api.value(0)); // 单元格中心
+        const s = cell - gap;             // 可见正方形边长
+        return {
+          type: 'roundRect',
+          shape: { x: p[0] - s / 2, y: p[1] - s / 2, width: s, height: s, r: Math.max(2, Math.round(s * 0.18)) },
+          style: { fill: colorOf(api.value(1)) },
+        };
+      },
       data,
     }],
   }, true);
