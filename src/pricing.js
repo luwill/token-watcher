@@ -15,7 +15,7 @@ const SEED = {
   usd_to_cny: 7.2,
   _note: '单价为每百万 token；DeepSeek 为峰时价（谷时减半）；编辑后即时生效',
   models: {
-    'deepseek-flash':   { currency: 'USD', input_miss: 0.30,  input_hit: 0.006, output: 1.20 },
+    'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 },
     'deepseek-v4-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 }, // 官方已路由至 V4.1 Flash 同价
     'deepseek-v4-pro':  { currency: 'USD', input_miss: 1.32,  input_hit: 0.044, output: 3.96 },
     'kimi-k2.6':        { currency: 'CNY', input_miss: 6.50,  input_hit: 1.10,  output: 27.0 },
