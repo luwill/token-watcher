@@ -41,13 +41,12 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: 14px 16px;
 }
-.card .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.card .l { color: var(--dim); font-size: 12px; margin-top: 2px; }
+.card .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.card .l { color: var(--dim); font-size: 11px; margin-top: 3px; letter-spacing: .3px; }
 
-.quota { display: grid; grid-template-columns: 1fr 1fr 300px; gap: 12px; margin-bottom: 8px; }
-.quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .quota-extra:empty { display: none; }
-.quota-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.quota-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; }
 .quota-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
 .q-title { font-weight: 600; }
 .q-plan { font-size: 12px; color: var(--codex); background: rgba(52,201,142,.1); padding: 1px 8px; border-radius: 6px; }
@@ -92,7 +91,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: t
 .badge.workbuddy { color: #f78fb3; background: rgba(247,143,179,.12); }
 .badge.grok { color: #e6edf3; background: rgba(230,237,243,.12); }
 
-.rates-card { grid-column: span 2; }
+.rates-card { grid-column: span 2; min-width: 0; }
 .rates-table { width: 100%; font-size: 12px; }
 .rates-table th { padding: 2px 8px; }
 .rates-table td { padding: 3px 8px; }
