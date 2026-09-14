@@ -2,7 +2,9 @@
 
 **Mac 本地多源 AI Agent 用量与配额实时面板。** 一个常驻进程解析你机器上各 AI 编码工具留下的本地会话记录，统一归一化为 token 事件流，提供 Codex 风格的统计面板、实时配额卡、厂商余额轮询、费用估算与菜单栏胶囊。零框架依赖、纯本地运行。
 
-![TokenMeter](web/favicon.svg)
+![TokenMeter](docs/screenshot.png)
+
+> 截图为真实运行数据（厂商余额已脱敏）。
 
 ## 支持的工具（7 源）
 
