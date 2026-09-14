@@ -467,7 +467,9 @@ function renderHeatmap(byDayAll) {
   const availW = (host.clientWidth || 900) - 14;
   const cell = Math.max(8, Math.min(18, Math.floor(availW / nWeeks))); // 栅格步长（横竖同值）
   const gap = Math.max(2, Math.round(cell * 0.2));
-  const hostH = cell * 7 + 40;
+  // 容器高度必须精确等于 top(6) + 7 行 × cell + bottom(26)：
+  // ECharts 在 top+bottom 同时给定时把行距归一为 auto（按可用高度均分），多 1px 都会被摊进行距
+  const hostH = cell * 7 + 32;
   host.style.height = hostH + 'px';
   charts.heat.resize();
 
@@ -501,7 +503,7 @@ function renderHeatmap(byDayAll) {
     calendar: {
       range: [start, end],
       left: 14, top: 6, bottom: 26,
-      cellSize: [cell, cell],           // 横竖同一步长：栅格天然正方形
+      cellSize: [cell, cell],           // 配合容器高度精确对齐，横竖步长一致
       splitLine: { show: false },
       itemStyle: { color: 'rgba(0,0,0,0)', borderWidth: 0 }, // 底格透明，统一由 custom 绘制
       yearLabel: { show: false },
@@ -515,9 +517,10 @@ function renderHeatmap(byDayAll) {
       renderItem: (params, api) => {
         const p = api.coord(api.value(0)); // 单元格中心
         const s = cell - gap;             // 可见正方形边长
+        // 此 ECharts 构建的 custom renderItem 不支持 roundRect（抛空错误），用 rect
         return {
-          type: 'roundRect',
-          shape: { x: p[0] - s / 2, y: p[1] - s / 2, width: s, height: s, r: Math.max(2, Math.round(s * 0.18)) },
+          type: 'rect',
+          shape: { x: p[0] - s / 2, y: p[1] - s / 2, width: s, height: s },
           style: { fill: colorOf(api.value(1)) },
         };
       },
