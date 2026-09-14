@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DATA_DIR } from './config.js';
+import { ensurePrices, lookupPrice } from './litellm.js';
 
 /**
  * ccmr 费用折算：单价表 ~/.token-stats/pricing.json（用户可编辑覆盖）。
@@ -47,41 +48,71 @@ function toCny(amount, currency, rate) {
 }
 
 /**
- * 计算 ccmr 侧费用。窗口：0=全部；否则最近 N 天。
- * 返回 { today_cny, last7d_cny, all_cny, by_model, unpriced }
+ * 全源费用折算（7 源）：
+ * 单价解析优先级 = 用户 pricing.json（可含人民币直价）> LiteLLM 实时牌价（USD×汇率）。
+ * ccmr 为按量实付；claude-code/codex/zcode/grok-build 等订阅制工具为 "API 等值成本"（假设性），
+ * 前端需分开标注。窗口：0=全部。
  */
+function priceOf(model, table, rate) {
+  const local = table[model];
+  if (local) {
+    return {
+      inCny: local.currency === 'USD' ? local.input_miss * rate : local.input_miss,
+      cacheCny: local.currency === 'USD' ? local.input_hit * rate : local.input_hit,
+      outCny: local.currency === 'USD' ? local.output * rate : local.output,
+      cacheWCny: 0,
+    };
+  }
+  const p = lookupPrice(model);
+  if (!p) return null;
+  return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate };
+}
+
 export async function computeCosts(db) {
   const pricing = await loadPricing();
   const rate = pricing.usd_to_cny || 7.2;
   const table = pricing.models || {};
+  await Promise.race([ensurePrices().catch(() => {}), new Promise(r => setTimeout(r, 1500))]);
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-  const win = (since, label) => db.prepare(`
-    SELECT model, SUM(input_tokens) fi, SUM(cached_input) ci, SUM(output_tokens) oi
-    FROM events WHERE tool = 'ccmr' AND ts >= ? GROUP BY model`).all(since);
 
-  const agg = (rows) => {
-    let cny = 0;
-    const byModel = [];
-    const unpriced = [];
-    for (const m of rows) {
-      const p = table[m.model];
-      if (!p) { if (m.fi + m.ci + m.oi > 0) unpriced.push(m.model); continue; }
-      const c = toCny(modelCostCny(p, m), p.currency, rate);
-      cny += c;
-      byModel.push({ model: m.model, cost_cny: c, tokens: (m.fi || 0) + (m.ci || 0) + (m.oi || 0), usd: p.currency === 'USD' });
+  const agg = (since) => {
+    const rows = db.prepare(`
+      SELECT tool, model, SUM(input_tokens) fi, SUM(cached_input) ci,
+             SUM(cache_write) cw, SUM(output_tokens) oi
+      FROM events WHERE ts >= ? GROUP BY tool, model`).all(since);
+    const byModel = new Map(), byTool = new Map(), unpriced = new Set();
+    let total = 0;
+    for (const r of rows) {
+      const tokens = (r.fi || 0) + (r.ci || 0) + (r.oi || 0);
+      if (tokens <= 0) continue;
+      const p = priceOf(r.model, table, rate);
+      if (!p) { unpriced.add(r.model); continue; }
+      const c = (r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
+        + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny;
+      total += c;
+      const m = byModel.get(r.model) || { model: r.model, cost_cny: 0, tokens: 0 };
+      m.cost_cny += c; m.tokens += tokens; byModel.set(r.model, m);
+      const t = byTool.get(r.tool) || { tool: r.tool, cost_cny: 0 };
+      t.cost_cny += c; byTool.set(r.tool, t);
     }
-    byModel.sort((a, b) => b.cost_cny - a.cost_cny);
-    return { cny, byModel, unpriced: [...new Set(unpriced)] };
+    return {
+      cny: total,
+      by_model: [...byModel.values()].sort((a, b) => b.cost_cny - a.cost_cny),
+      by_tool: [...byTool.values()].sort((a, b) => b.cost_cny - a.cost_cny),
+      unpriced: [...unpriced],
+    };
   };
 
-  const all = agg(win(0));
-  const today = agg(win(dayStart.getTime()));
-  const last7 = agg(win(Date.now() - 7 * 86_400_000));
+  const all = agg(0);
+  const today = agg(dayStart.getTime());
+  const last7 = agg(Date.now() - 7 * 86_400_000);
   return {
     today_cny: today.cny,
     last7d_cny: last7.cny,
     all_cny: all.cny,
-    by_model: all.byModel,
+    by_model: all.by_model,
+    by_tool: all.by_tool,
+    today_by_tool: today.by_tool,
     unpriced: all.unpriced,
     usd_to_cny: rate,
   };

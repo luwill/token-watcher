@@ -131,17 +131,18 @@ function renderBalances(balances, rates, recon, costs) {
     </div>`;
   }
   if (costs && (costs.today_cny > 0 || costs.all_cny > 0)) {
-    const top = costs.by_model.slice(0, 3)
-      .map(m => `${m.model} ¥${m.cost_cny.toFixed(2)}`).join(' · ');
-    const unpriced = costs.unpriced?.length ? `<div class="recon dim">⚠ 未配单价：${costs.unpriced.join(', ')}</div>` : '';
+    const chips = (costs.by_tool || []).slice(0, 4)
+      .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · ');
+    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${costs.unpriced.join(', ')}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
     html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">ccmr 花费（估算）</span>
-        <span class="q-reset">按官方牌价</span></div>
+      <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
+        <span class="q-reset">USD×${costs.usd_to_cny}</span></div>
       <div class="q-meta" style="margin-top:2px">
         <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
         <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
       </div>
-      <div class="recon dim" title="${top}">${top}${costs.usd_to_cny ? ` ｜ USD×${costs.usd_to_cny}` : ''}</div>
+      <div class="recon dim" title="${chips}">${chips}</div>
+      <div class="recon dim" style="margin-top:2px">ccmr 为实付 · 订阅工具为 API 等值成本</div>
       ${unpriced}
     </div>`;
   }
