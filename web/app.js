@@ -175,7 +175,13 @@ function renderCostDay(byDay) {
     grid: { left: 50, right: 12, top: 14, bottom: 46 },
     tooltip: {
       trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      valueFormatter: (v) => '¥' + (v || 0).toFixed(2),
+      // 只列当日实际有花费的模型（¥0.00 的不显示），按金额降序
+      formatter: (params) => {
+        const used = params.filter(p => p.value > 0.005).sort((a, b) => b.value - a.value);
+        const total = used.reduce((s, p) => s + p.value, 0);
+        const lines = used.map(p => `${p.marker} ${p.seriesName}　¥${p.value.toFixed(2)}`).join('<br>');
+        return `${params[0].axisValue}<br><b>合计 ¥${total.toFixed(2)}</b><br>${lines || '无花费'}`;
+      },
     },
     legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0 },
     xAxis: {
