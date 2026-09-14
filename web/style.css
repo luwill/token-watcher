@@ -115,3 +115,7 @@ footer { margin-top: 18px; font-size: 12px; }
 
 .live-chip i { animation: pulse 1.6s infinite; }
 .live-chip b { color: #e6edf3; }
+
+.heat-tip { display: none; position: fixed; z-index: 999; background: #1a1a25; border: 1px solid #262636;
+  border-radius: 6px; padding: 6px 10px; color: #e8e8f0; font-size: 12px; line-height: 1.6;
+  pointer-events: none; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
