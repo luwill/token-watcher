@@ -14,7 +14,8 @@
     "bar": "open bin/token-stats-bar.app",
     "build-bar": "swiftc -O -o bin/token-stats-bar menubar/main.swift && mkdir -p bin/token-stats-bar.app/Contents/MacOS && cp bin/token-stats-bar bin/token-stats-bar.app/Contents/MacOS/ && cp menubar/Info.plist bin/token-stats-bar.app/Contents/",
     "install-agent": "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
-    "uninstall-agent": "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist"
+    "uninstall-agent": "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
+    "test": "node --no-warnings test/run.mjs"
   },
   "engines": {
     "node": ">=22.5"
