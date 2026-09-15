@@ -188,7 +188,7 @@ function renderCostDay(byDay) {
         return `${params[0].axisValue}<br><b>合计 ¥${total.toFixed(2)}</b><br>${lines || '无花费'}`;
       },
     },
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0 },
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, top: 0, type: 'scroll', width: '70%' },
     xAxis: {
       type: 'category', data: byDay.map(d => d.day.slice(5)),
       axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 11 },
