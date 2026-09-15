@@ -25,6 +25,16 @@ if (existsSync(LEGACY_DB) && !existsSync(DB_PATH)) renameSync(LEGACY_DB, DB_PATH
 
 const log = (msg) => console.log(`[tokenmeter] ${msg}`);
 
+/**
+ * 常驻服务的兜底：本地只读面板最坏结果是数字变陈旧，不该因为某一轮解析/请求出错就整个消失。
+ * launchd 的 KeepAlive 会把崩溃拉起来（掩盖问题），`npx token-watcher serve` 则直接死掉。
+ * 只给 serve 装——scan/today 是一次性命令，出错必须大声失败（非 0 退出码）。
+ */
+function installDaemonGuards() {
+  process.on('unhandledRejection', (err) => log(`unhandled rejection: ${err?.message ?? err}`));
+  process.on('uncaughtException', (err) => log(`uncaught exception: ${err?.stack ?? err}`));
+}
+
 function parseArgs(argv) {
   const args = { cmd: 'serve', port: DEFAULT_PORT };
   for (let i = 0; i < argv.length; i++) {
@@ -61,6 +71,7 @@ if (cmd === 'scan') {
   log(`今日: ${fmt(today.t || 0)} tokens（${byTool.map(r => `${r.tool} ${fmt(r.t)}`).join(' | ') || '无'}）`);
   store.close();
 } else {
+  installDaemonGuards();
   log(`db: ${DB_PATH}`);
   const scanner = new Scanner(store, { log });
   log('初次扫描历史数据（增量游标，仅首次较慢）…');

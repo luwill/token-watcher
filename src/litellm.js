@@ -1,6 +1,6 @@
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, isOffline } from './config.js';
 
 /**
  * LiteLLM 实时模型价格：
@@ -46,6 +46,12 @@ export async function ensurePrices({ force = false } = {}) {
   if (loading) return loading;
   loading = (async () => {
     try {
+      // 离线：只读本地缓存；没有缓存就留空表，未命中的模型走 pricing.json 或列入 unpriced
+      if (isOffline()) {
+        index = buildIndex(JSON.parse(await readFile(CACHE_PATH, 'utf8')));
+        onChange?.();
+        return index;
+      }
       const fresh = !force && await stat(CACHE_PATH).then(s => Date.now() - s.mtimeMs < TTL_MS).catch(() => false);
       if (!fresh) {
         const ac = new AbortController();

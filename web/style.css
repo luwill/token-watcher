@@ -36,6 +36,12 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 }
 .range button.on { color: var(--text); background: var(--panel2); border-color: #3d3d55; }
 
+.load-error {
+  background: rgba(224, 101, 95, .12); border: 1px solid #e0655f; color: #f0a9a5;
+  border-radius: 10px; padding: 9px 14px; font-size: 13px; margin-bottom: 14px;
+}
+.load-error[hidden] { display: none; }
+
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;

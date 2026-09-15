@@ -1,6 +1,6 @@
 node_modules/
-bin/token-stats-bar
-bin/token-stats-bar.app/
+bin/token-watcher-bin
+bin/token-watcher.app/
 *.db
 *.db-shm
 *.db-wal

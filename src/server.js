@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { extname, join, resolve, dirname } from 'node:path';
-import { WEB_DIR, ECHARTS_PATH, DB_PATH } from './config.js';
+import { WEB_DIR, ECHARTS_PATH, DB_PATH, isOffline } from './config.js';
 import { learnWorkbuddyRates } from './rates.js';
 import { loadPricing, computeCosts, computeRecon } from './pricing.js';
 import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
@@ -115,7 +115,7 @@ function computeHealth(db, scannerStats) {
   });
 }
 
-export async function buildSummary(store, scannerStats, days) {
+export async function buildSummary(store, scannerStats, days, { balanceStatus = [] } = {}) {
   const db = store.db;
   const now = Date.now();
   const todayStart = startOfDay();
@@ -168,9 +168,13 @@ export async function buildSummary(store, scannerStats, days) {
     e.total += r.total;
   }
 
+  // 先算费用：对账要复用同一份汇率，两张卡才不会各说各话
+  const costs = await computeCosts(db, days);
+
   return {
     generated_at: now,
     range_days: days,
+    offline: isOffline(),
     totals: {
       all_time_tokens: allTime.total || 0,
       all_time_events: allTime.n || 0,
@@ -189,13 +193,14 @@ export async function buildSummary(store, scannerStats, days) {
     balances: store.getBalances(),
     wb_rates: store.getRates(),
     health: computeHealth(db, scannerStats || {}),
+    balance_status: balanceStatus,
     live: { grok: (() => {
       const q = store.getQuota('grok:live');
       if (!q || Date.now() - q.ts > 10 * 60_000) return null; // 10 分钟无写入视为已结束
       return { ...q.data, ts: q.ts };
     })() },
-    costs: await computeCosts(db, days),
-    recon: computeRecon(db, store, await loadPricing()),
+    costs,
+    recon: computeRecon(db, store, await loadPricing(), { rate: costs.usd_to_cny }),
     recent,
   };
 }
@@ -214,6 +219,33 @@ async function serveFile(res, path, type) {
 }
 
 function db_safe(store) { return store.db; }
+
+/** Host 头是否指向本机（端口无关）；缺失 Host 的裸 HTTP/1.0 请求按本机放行 */
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '']);
+function isLocalHost(host) {
+  const h = String(host ?? '').toLowerCase().trim();
+  // IPv6 字面量形如 [::1]:8787；IPv4/域名形如 127.0.0.1:8787
+  const name = h.startsWith('[') ? h.slice(0, h.indexOf(']') + 1) : h.replace(/:\d+$/, '');
+  return LOCAL_HOSTS.has(name);
+}
+
+/**
+ * 路由统一错误处理。
+ * createServer 的 handler 是 async：任何冒泡出去的异常都是未处理 rejection，
+ * Node 默认直接退出进程——一次 SQLITE_BUSY 就能让常驻面板整个消失。
+ * 错误详情只进本地日志（可能含本地路径），响应体只给一句通用说明。
+ */
+export function withErrors(handler, log = () => {}) {
+  return async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (err) {
+      log(`request failed ${req?.url ?? '?'}: ${err?.message ?? err}`);
+      if (res.headersSent) res.end();
+      else json(res, 500, { error: 'request failed, see server log' });
+    }
+  };
+}
 
 /** 每日备份（VACUUM INTO 快照，保留最近 7 份） */
 function scheduleBackup(store, log = () => {}) {
@@ -255,17 +287,27 @@ export function startServer({ store, scanner, balancePoller, port, log = () => {
   onFxLoaded(notify);                              // 汇率加载/刷新后推送前端
   ensurePrices().catch(() => {});
   ensureFxRate({}).catch(() => {});
-  setInterval(() => ensurePrices({ force: true }).catch(() => {}), 24 * 3600_000).unref?.();
+  // 离线模式没有可刷新的远端来源，不排这个定时任务
+  if (isOffline()) log('离线模式：跳过汇率 / LiteLLM 牌价 / 余额的全部外网请求');
+  else setInterval(() => ensurePrices({ force: true }).catch(() => {}), 24 * 3600_000).unref?.();
   try { learnWorkbuddyRates(store); } catch { /* 首次静默 */ }
 
-  const server = createServer(async (req, res) => {
+  const server = createServer(withErrors(async (req, res) => {
+    // DNS rebinding 防护：只绑 127.0.0.1 挡不住恶意页面把自家域名解析到本机再来读面板。
+    // 浏览器会如实带上它请求的主机名，本机访问只会是 127.0.0.1 / localhost / ::1。
+    if (!isLocalHost(req.headers.host)) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('forbidden host');
+    }
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
 
     if (p === '/api/summary') {
       const days = Math.max(0, Math.min(3650, Number(url.searchParams.get('days')) || 30));
       try {
-        return json(res, 200, await buildSummary(store, scanner.stats, days));
+        return json(res, 200, await buildSummary(store, scanner.stats, days, {
+          balanceStatus: balancePoller?.status?.() ?? [],
+        }));
       } catch (err) {
         log(`summary error: ${err.message}`); // 详情仅进本地日志；错误消息可能含本地路径，不外发
         return json(res, 500, { error: 'summary failed, see server log' });
@@ -343,7 +385,7 @@ export function startServer({ store, scanner, balancePoller, port, log = () => {
     const safe = resolve(WEB_DIR, '.' + p);
     if (safe.startsWith(resolve(WEB_DIR))) return serveFile(res, safe);
     res.writeHead(404); res.end();
-  });
+  }, log));
 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {

@@ -51,6 +51,15 @@ async function* enumerate(source) {
   }
 }
 
+/** 当前确实存在的 roots；root 整体不可用（外置盘未挂载/目录重命名）时不清理其游标 */
+async function liveRootsOf(source) {
+  const out = [];
+  for (const root of source.roots) {
+    if (await stat(root).then(() => true).catch(() => false)) out.push(root);
+  }
+  return out;
+}
+
 export class Scanner extends EventEmitter {
   constructor(store, { log = () => {} } = {}) {
     super();
@@ -75,14 +84,21 @@ export class Scanner extends EventEmitter {
     const t0 = Date.now();
     let files = 0, inserted = 0;
 
+    try {
     for (const src of SOURCES) {
       const st = this._stat(src.tool);
       st.parse_errors = 0; // 每轮重置为"本轮错误数"
       st.last_scan_ms = Date.now();
+      const liveRoots = await liveRootsOf(src);
+      const seen = new Set();
       for await (const [path, sessionKey] of enumerate(src)) {
+        // 枚举与 stat 之间文件可能已被删除（Claude 会话清理 / Codex 归档搬移是常态）：
+        // stat 抛 ENOENT 会让整轮扫描 reject，在防抖定时器里就是未处理 rejection → 进程退出
+        const s = await stat(path).catch(() => null);
+        if (!s) continue;
         files++;
         st.files++;
-        const s = await stat(path);
+        seen.add(path);
         const fileId = sessionKey || basename(path, '.jsonl');
         const row = this.store.getFile(path);
         const prev = row?.state_json ? JSON.parse(row.state_json) : undefined;
@@ -117,14 +133,42 @@ export class Scanner extends EventEmitter {
           this.log(`parse error ${path}: ${err.message}`);
         }
       }
+      this._pruneMissingFiles(src.tool, seen, liveRoots);
     }
-    this.scanning = false;
+    } finally {
+      // 必须无条件复位：留在 true 会让之后每一轮扫描都被"并发中"挡掉，面板从此停更
+      this.scanning = false;
+    }
     this._inheritCodexModels();
     if (!quiet) {
       this.log(`scan: ${files} files, +${inserted} events in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
     if (inserted > 0) this.emit('update');
     return { files, inserted };
+  }
+
+  /**
+   * 清理已消失文件的游标行（真实库两天就攒下 40 条，且会让健康自检的文件数长期虚高）。
+   * 只清"所属 root 当前存在"的路径；只删 files 行，绝不动 events——历史用量必须保留。
+   * 文件若日后回来，dedup 保证重新解析是幂等的。
+   */
+  _pruneMissingFiles(tool, seen, liveRoots) {
+    if (!liveRoots.length) return 0;
+    const db = this.store.db;
+    const rows = db.prepare('SELECT path FROM files WHERE tool = ?').all(tool);
+    const gone = rows.filter(r => !seen.has(r.path) && liveRoots.some(root => r.path.startsWith(root)));
+    if (!gone.length) return 0;
+    const del = db.prepare('DELETE FROM files WHERE path = ?');
+    db.exec('BEGIN');
+    try {
+      for (const g of gone) del.run(g.path);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      this.log(`prune ${tool}: ${err.message}`);
+      return 0;
+    }
+    return gone.length;
   }
 
   /**
@@ -189,9 +233,10 @@ export class Scanner extends EventEmitter {
 
   _scheduleScan() {
     if (this._debounceTimer) return;
-    this._debounceTimer = setTimeout(async () => {
+    this._debounceTimer = setTimeout(() => {
       this._debounceTimer = null;
-      await this.scanAll({ quiet: true });
+      // 定时器回调里的 rejection 无人接手 = 未处理 rejection = 进程退出，必须就地收敛
+      this.scanAll({ quiet: true }).catch(err => this.log(`scan failed: ${err?.message ?? err}`));
     }, 800);
     this._debounceTimer.unref();
   }

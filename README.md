@@ -2,7 +2,7 @@
 
 **Mac 本地多源 AI Agent 用量与配额实时面板。** 一个常驻进程解析你机器上各 AI 编码工具留下的本地会话记录，统一归一化为 token 事件流，提供 Codex 风格的统计面板、实时配额卡、厂商余额轮询、费用估算与菜单栏胶囊。零框架依赖、纯本地运行。
 
-![Token Watcher](docs/screenshot.png)
+![Token Watcher](https://raw.githubusercontent.com/luwill/token-watcher/main/docs/screenshot.png)
 
 > 截图为真实运行数据（厂商余额已脱敏）。
 
@@ -33,7 +33,7 @@ cd token-watcher && npm install
 npm run serve
 ```
 
-要求：**Node ≥ 22.5**（内置 `node:sqlite`，零原生依赖）；dsh 源需要系统 `zstd`（`brew install zstd`，缺失自动跳过该源）。
+要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）；dsh 源需要系统 `zstd`（`brew install zstd`，缺失自动跳过该源）。
 
 平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）；Linux 理论可用（Node 20+ 支持 recursive watch），未完整测试；Windows 未测试。菜单栏 App 为 macOS 专属。
 
@@ -64,9 +64,21 @@ npm run bar            # macOS 菜单栏胶囊（需 npm run build-bar 编译）
 
 ## 隐私
 
-- 纯本地：只读取上述本地文件，**不上传任何数据**，面板只监听 127.0.0.1
+- 纯本地：只读取上述本地文件，**不上传任何用量数据**，面板只监听 127.0.0.1 且校验 Host（挡 DNS rebinding）
 - API 密钥仅在服务进程内使用（调厂商余额接口），不入库、不进前端
 - 统计库只存聚合事件（时间/工具/模型/token 数/项目名），不存对话内容
+
+**出站请求清单**（只有这三类，都不携带你的用量数据）：
+
+| 用途 | 端点 | 频率 |
+|---|---|---|
+| USD→CNY 汇率 | `open.er-api.com`、`cdn.jsdelivr.net` | 12 小时，本地缓存兜底 |
+| 模型牌价 | `raw.githubusercontent.com`（LiteLLM 价格表） | 24 小时，本地缓存兜底 |
+| 厂商余额 | DeepSeek / Kimi 官方接口（带你的 key） | 30 分钟，连续失败自动熔断 |
+
+要完全断网运行，设 `TOKENMETER_OFFLINE=1`：三类请求全部跳过，改用本地缓存与
+`~/.tokenmeter/pricing.json`（可设 `usd_to_cny` + `usd_to_cny_manual: true` 固定汇率）。
+回归测试即以此模式运行，不依赖公网。
 
 ## 免责声明
 

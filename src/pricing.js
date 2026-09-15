@@ -144,11 +144,15 @@ export async function computeCosts(db, days = 30) {
   };
 }
 
-/** 余额对账：最近 hours 小时余额差值 vs 统计口径花费（仅人民币计价厂商） */
-export function computeRecon(db, store, pricing, hours = 24) {
+/**
+ * 余额对账：最近 hours 小时余额差值 vs 统计口径花费。
+ * 单价走与费用卡同一条 priceOf 链路（美元按汇率折人民币 + LiteLLM 兜底），
+ * 否则美元计价的厂商（DeepSeek）会永远算出 0，面板反而误报"对不上"。
+ */
+export function computeRecon(db, store, pricing, { hours = 24, rate = 7.2 } = {}) {
   const since = Date.now() - hours * 3_600_000;
   const table = pricing?.models || {};
-  const PROVIDER_PREFIX = { deepseek: 'deepseek', kimi: 'kimi' };
+  const PROVIDER_PREFIX = { deepseek: 'deepseek', kimi: 'kimi', glm: 'glm' };
   const out = [];
   for (const b of store.getBalances()) {
     const rows = db.prepare(
@@ -162,9 +166,10 @@ export function computeRecon(db, store, pricing, hours = 24) {
       for (const m of db.prepare(`
         SELECT model, SUM(input_tokens) fi, SUM(cached_input) ci, SUM(output_tokens) oi
         FROM events WHERE tool = 'ccmr' AND ts >= ? GROUP BY model`).all(since)) {
-        const p = table[m.model];
-        if (!p || !m.model.startsWith(prefix) || p.currency !== 'CNY') continue;
-        spend += (m.fi / 1e6) * p.input_miss + (m.ci / 1e6) * p.input_hit + (m.oi / 1e6) * p.output;
+        if (!m.model?.startsWith(prefix)) continue;
+        const p = priceOf(m.model, table, rate);
+        if (!p) continue;
+        spend += (m.fi / 1e6) * p.inCny + (m.ci / 1e6) * p.cacheCny + (m.oi / 1e6) * p.outCny;
       }
     }
     out.push({ provider: b.provider, id: b.id, balance: b.balance, delta, spend, hours });
