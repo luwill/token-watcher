@@ -3,9 +3,11 @@
  * Token Watcher — 本地多源 token 用量与配额面板
  *
  * 用法：
- *   tokenmeter scan          全量/增量扫描一次并退出
- *   tokenmeter serve [--port 8787]   扫描 + 常驻服务 + 实时监听（默认命令）
- *   tokenmeter today         打印今日与累计用量摘要
+ *   tokenwatcher scan          全量/增量扫描一次并退出
+ *   tokenwatcher serve [--port 8787]   扫描 + 常驻服务 + 实时监听（默认命令）
+ *   tokenwatcher today         打印今日与累计用量摘要
+ *
+ * tokenmeter 为旧命令名，仍作为别名保留（1.2 及更早版本装的是这个名字）。
  */
 import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,7 +25,7 @@ if (existsSync(LEGACY) && !existsSync(NEWDIR)) renameSync(LEGACY, NEWDIR);
 const LEGACY_DB = join(NEWDIR, 'token-stats.db');
 if (existsSync(LEGACY_DB) && !existsSync(DB_PATH)) renameSync(LEGACY_DB, DB_PATH);
 
-const log = (msg) => console.log(`[tokenmeter] ${msg}`);
+const log = (msg) => console.log(`[token-watcher] ${msg}`);
 
 /**
  * 常驻服务的兜底：本地只读面板最坏结果是数字变陈旧，不该因为某一轮解析/请求出错就整个消失。

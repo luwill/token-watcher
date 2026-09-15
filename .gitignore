@@ -9,3 +9,6 @@ bin/token-watcher.app/
 
 # 个人踩坑复盘笔记，不入库
 learnings/
+
+# npm pack 产物
+*.tgz
