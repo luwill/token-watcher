@@ -28,6 +28,7 @@
   "author": "louwill",
   "type": "module",
   "bin": {
+    "token-watcher": "bin/tokenwatcher.js",
     "tokenwatcher": "bin/tokenwatcher.js",
     "tokenmeter": "bin/tokenwatcher.js"
   },
