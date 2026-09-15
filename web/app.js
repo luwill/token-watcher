@@ -177,17 +177,29 @@ function renderStatus(quota, balances, rates, recon, costs) {
 const MODEL_PALETTE = ['#e07a5f', '#34c98e', '#5aa9e6', '#f2c14e', '#8b7cf6', '#f78fb3', '#4ea8de', '#e6edf3'];
 function renderCostDay(byDay) {
   if (!charts.costday || !byDay?.length) return;
+  // DeepSeek 家模型统一归并为 deepseek-v4.1-flash 展示（按用户口径）
+  const displayName = (m) => m.startsWith('deepseek') ? 'deepseek-v4.1-flash' : m;
+  const merged = new Map(); // 显示名 -> 逐日成本
+  for (const d of byDay) {
+    const dayMap = new Map();
+    for (const [m, c] of Object.entries(d.models)) {
+      const n = displayName(m);
+      dayMap.set(n, (dayMap.get(n) || 0) + c);
+    }
+    merged.set(d.day, dayMap);
+  }
   const modelSet = new Set();
-  for (const d of byDay) Object.keys(d.models).forEach(m => modelSet.add(m));
-  const sorted = [...modelSet].sort((a, b) => {
-    const ta = byDay.reduce((s, d) => s + (d.models[a] || 0), 0);
-    const tb = byDay.reduce((s, d) => s + (d.models[b] || 0), 0);
-    return tb - ta;
-  });
-  // Top 6 + "其他"聚合：低价高量的模型（如 deepseek 缓存读）不会被静默丢弃
-  const models = sorted.slice(0, 6);
-  const rest = sorted.slice(6);
-  const restCost = (d) => rest.reduce((s, m) => s + (d.models[m] || 0), 0);
+  for (const dayMap of merged.values()) dayMap.forEach((_, m) => modelSet.add(m));
+  const totalOf = (m) => [...merged.values()].reduce((s, dm) => s + (dm.get(m) || 0), 0);
+  const ranked = [...modelSet].sort((a, b) => totalOf(b) - totalOf(a));
+  const models = ranked.slice(0, 7);
+  // DeepSeek 系有消耗则固定保留（成本虽低但用户重点关注），挤掉榜尾非 deepseek 项
+  const ds = 'deepseek-v4.1-flash';
+  if (modelSet.has(ds) && !models.includes(ds)) {
+    for (let i = models.length - 1; i >= 0; i--) {
+      if (!models[i].startsWith('deepseek')) { models[i] = ds; break; }
+    }
+  }
   charts.costday.setOption({
     animationDuration: 300,
     grid: { left: 50, right: 12, top: 14, bottom: 46 },
@@ -201,27 +213,19 @@ function renderCostDay(byDay) {
         return `${params[0].axisValue}<br><b>合计 ¥${total.toFixed(2)}</b><br>${lines || '无花费'}`;
       },
     },
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, top: 0, type: 'scroll', width: '70%' },
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, type: 'scroll' },
     xAxis: {
       type: 'category', data: byDay.map(d => d.day.slice(5)),
       axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 11 },
       axisLine: { lineStyle: { color: '#262636' } },
     },
     yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
-    series: [
-      ...models.map((m, i) => ({
-        name: m, type: 'bar', stack: 'c',
-        data: byDay.map(d => +(d.models[m] || 0).toFixed(4)),
-        itemStyle: { color: MODEL_PALETTE[i % MODEL_PALETTE.length] },
-        barMaxWidth: 22,
-      })),
-      ...(rest.length ? [{
-        name: `其他(${rest.length}模型)`, type: 'bar', stack: 'c',
-        data: byDay.map(d => +restCost(d).toFixed(4)),
-        itemStyle: { color: '#6e7681' },
-        barMaxWidth: 22,
-      }] : []),
-    ],
+    series: models.map((m, i) => ({
+      name: m, type: 'bar', stack: 'c',
+      data: [...merged.values()].map(dm => +(dm.get(m) || 0).toFixed(4)),
+      itemStyle: { color: m === 'deepseek-v4.1-flash' ? '#5aa9e6' : MODEL_PALETTE[i % MODEL_PALETTE.length] },
+      barMaxWidth: 22,
+    })),
   }, true);
 }
 
@@ -290,12 +294,12 @@ function renderTrend(byDay) {
   const tools = Object.keys(TOOL_COLORS).filter(t => rows.some(r => r.tools[t]));
   charts.trend.setOption({
     animationDuration: 300,
-    grid: { left: 70, right: 16, top: 30, bottom: 46 },
+    grid: { left: 70, right: 16, top: 14, bottom: 46 },
     tooltip: {
       trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
       valueFormatter: (v) => fmt(v),
     },
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 12 }, top: 0 },
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, type: 'scroll' },
     xAxis: {
       type: 'category', data: rows.map(r => r.day.slice(5)),
       axisLabel: { color: '#8a8aa0', rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
