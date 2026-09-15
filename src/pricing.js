@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DATA_DIR } from './config.js';
 import { ensurePrices, lookupPrice } from './litellm.js';
+import { ensureFxRate } from './fx.js';
 
 /**
  * ccmr 费用折算：单价表 ~/.tokenmeter/pricing.json（用户可编辑覆盖）。
@@ -13,7 +14,7 @@ import { ensurePrices, lookupPrice } from './litellm.js';
 const PRICING_PATH = join(DATA_DIR, 'pricing.json');
 
 const SEED = {
-  usd_to_cny: 7.2,
+  // 汇率默认实时拉取；如需固定：设 usd_to_cny 数字并加 usd_to_cny_manual: true
   _note: '单价为每百万 token；DeepSeek 为峰时价（谷时减半）；编辑后即时生效',
   models: {
     'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 },
@@ -70,7 +71,11 @@ function priceOf(model, table, rate) {
 
 export async function computeCosts(db, days = 30) {
   const pricing = await loadPricing();
-  const rate = pricing.usd_to_cny || 7.2;
+  const fx = await Promise.race([
+    ensureFxRate(pricing),
+    new Promise(r => setTimeout(() => r({ rate: pricing.usd_to_cny || 7.2, source: 'default' }), 2500)),
+  ]);
+  const rate = fx.rate;
   const table = pricing.models || {};
   await Promise.race([ensurePrices().catch(() => {}), new Promise(r => setTimeout(r, 1500))]);
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -134,6 +139,8 @@ export async function computeCosts(db, days = 30) {
     today_by_tool: today.by_tool,
     unpriced: all.unpriced,
     usd_to_cny: rate,
+    fx_source: fx.source,
+    fx_ts: fx.ts,
   };
 }
 

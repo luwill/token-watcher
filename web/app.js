@@ -132,7 +132,7 @@ function renderStatus(quota, balances, rates, recon, costs) {
     const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${costs.unpriced.join(', ')}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
     html += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
-        <span class="q-reset">USD×${costs.usd_to_cny}</span></div>
+        <span class="q-reset" title="${costs.fx_ts ? '汇率时间 ' + new Date(costs.fx_ts).toLocaleString('zh-CN') : ''}">USD×${costs.usd_to_cny}${costs.fx_source === 'manual' ? '' : ' ·实时'}</span></div>
       <div class="q-meta" style="margin-top:2px">
         <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
         <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
