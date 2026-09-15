@@ -23,9 +23,14 @@
 ## 快速开始
 
 ```bash
-npm install
-npm run serve  # 或：npx token-watcher serve          # 首扫历史（~3.3GB 约 6 秒，仅首次）+ 常驻实时服务
+# 方式一：npx 直接运行（推荐，无需克隆仓库）
+npx token-watcher serve
 open http://127.0.0.1:8787
+
+# 方式二：克隆仓库开发（首扫历史 ~3.3GB 约 6 秒，仅首次）
+git clone https://github.com/luwill/token-watcher.git
+cd token-watcher && npm install
+npm run serve
 ```
 
 要求：**Node ≥ 22.5**（内置 `node:sqlite`，零原生依赖）；dsh 源需要系统 `zstd`（`brew install zstd`，缺失自动跳过该源）。
