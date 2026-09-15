@@ -166,11 +166,15 @@ function renderCostDay(byDay) {
   if (!charts.costday || !byDay?.length) return;
   const modelSet = new Set();
   for (const d of byDay) Object.keys(d.models).forEach(m => modelSet.add(m));
-  const models = [...modelSet].sort((a, b) => {
+  const sorted = [...modelSet].sort((a, b) => {
     const ta = byDay.reduce((s, d) => s + (d.models[a] || 0), 0);
     const tb = byDay.reduce((s, d) => s + (d.models[b] || 0), 0);
     return tb - ta;
-  }).slice(0, 7);
+  });
+  // Top 6 + "其他"聚合：低价高量的模型（如 deepseek 缓存读）不会被静默丢弃
+  const models = sorted.slice(0, 6);
+  const rest = sorted.slice(6);
+  const restCost = (d) => rest.reduce((s, m) => s + (d.models[m] || 0), 0);
   charts.costday.setOption({
     animationDuration: 300,
     grid: { left: 50, right: 12, top: 14, bottom: 46 },
@@ -191,12 +195,20 @@ function renderCostDay(byDay) {
       axisLine: { lineStyle: { color: '#262636' } },
     },
     yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
-    series: models.map((m, i) => ({
-      name: m, type: 'bar', stack: 'c',
-      data: byDay.map(d => +(d.models[m] || 0).toFixed(4)),
-      itemStyle: { color: MODEL_PALETTE[i % MODEL_PALETTE.length] },
-      barMaxWidth: 22,
-    })),
+    series: [
+      ...models.map((m, i) => ({
+        name: m, type: 'bar', stack: 'c',
+        data: byDay.map(d => +(d.models[m] || 0).toFixed(4)),
+        itemStyle: { color: MODEL_PALETTE[i % MODEL_PALETTE.length] },
+        barMaxWidth: 22,
+      })),
+      ...(rest.length ? [{
+        name: `其他(${rest.length}模型)`, type: 'bar', stack: 'c',
+        data: byDay.map(d => +restCost(d).toFixed(4)),
+        itemStyle: { color: '#6e7681' },
+        barMaxWidth: 22,
+      }] : []),
+    ],
   }, true);
 }
 
