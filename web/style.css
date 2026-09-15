@@ -71,7 +71,7 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .charts.two-col { display: flex; flex-direction: column; gap: 12px; }
 .pair { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: stretch; }
 .pair .panel { display: flex; flex-direction: column; min-width: 0; }
-.pair .panel .chart { flex: 1 1 auto; min-height: 220px; height: auto; }
+.pair .panel .chart { flex: 1 1 0; min-height: 220px; height: auto; overflow: hidden; }
 .pair .panel .feed { flex: 1 1 auto; max-height: none; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
 .panel h2 { font-size: 13px; font-weight: 600; color: var(--dim); margin-bottom: 8px; }

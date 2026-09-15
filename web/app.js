@@ -16,9 +16,18 @@ for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'c
   const el = document.getElementById(id);
   if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
 }
-// 成对行布局会拉伸图表容器，ECharts 需显式 resize 才重排
+// 成对行布局会拉伸图表容器，ECharts 需显式 resize 才重排；
+// 必须先比对尺寸再 resize，否则与 flex 布局形成反馈循环（容器无限拉长）
 for (const c of Object.values(charts)) {
-  new ResizeObserver(() => c.resize()).observe(c.getDom());
+  const dom = c.getDom();
+  let lastW = 0, lastH = 0;
+  new ResizeObserver(() => {
+    const r = dom.getBoundingClientRect();
+    if (Math.abs(r.width - lastW) > 1 || Math.abs(r.height - lastH) > 1) {
+      lastW = r.width; lastH = r.height;
+      c.resize();
+    }
+  }).observe(dom);
 }
 window.addEventListener('resize', () => {
   Object.values(charts).forEach(c => c.resize());
@@ -499,7 +508,13 @@ function renderDensity(byDay) {
   // 窗口尺寸变化时重绘（挂到 host 上避免重复绑定）
   if (!host.__densityResize) {
     host.__densityResize = true;
-    const ro = new ResizeObserver(() => { if (host.__densityData) renderDensity(host.__densityData); });
+    let lastH = 0;
+    const ro = new ResizeObserver(() => {
+      if (!host.__densityData) return;
+      if (Math.abs(host.clientHeight - lastH) < 2) return; // 防追高循环
+      lastH = host.clientHeight;
+      renderDensity(host.__densityData);
+    });
     ro.observe(host);
   }
 }
