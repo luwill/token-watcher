@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * TokenMeter — 本地多源 token 用量与配额面板
+ * Token Watcher — 本地多源 token 用量与配额面板
  *
  * 用法：
- *   token-stats scan          全量/增量扫描一次并退出
- *   token-stats serve [--port 8787]   扫描 + 常驻服务 + 实时监听（默认命令）
- *   token-stats today         打印今日与累计用量摘要
+ *   tokenmeter scan          全量/增量扫描一次并退出
+ *   tokenmeter serve [--port 8787]   扫描 + 常驻服务 + 实时监听（默认命令）
+ *   tokenmeter today         打印今日与累计用量摘要
  */
 import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';

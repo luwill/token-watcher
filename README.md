@@ -1,8 +1,8 @@
-# TokenMeter
+# Token Watcher
 
 **Mac 本地多源 AI Agent 用量与配额实时面板。** 一个常驻进程解析你机器上各 AI 编码工具留下的本地会话记录，统一归一化为 token 事件流，提供 Codex 风格的统计面板、实时配额卡、厂商余额轮询、费用估算与菜单栏胶囊。零框架依赖、纯本地运行。
 
-![TokenMeter](docs/screenshot.png)
+![Token Watcher](docs/screenshot.png)
 
 > 截图为真实运行数据（厂商余额已脱敏）。
 
@@ -24,7 +24,7 @@
 
 ```bash
 npm install
-npm run serve          # 首扫历史（~3.3GB 约 6 秒，仅首次）+ 常驻实时服务
+npm run serve  # 或：npx token-watcher serve          # 首扫历史（~3.3GB 约 6 秒，仅首次）+ 常驻实时服务
 open http://127.0.0.1:8787
 ```
 
@@ -65,7 +65,7 @@ npm run bar            # macOS 菜单栏胶囊（需 npm run build-bar 编译）
 
 ## 免责声明
 
-TokenMeter 是**非官方**工具，解析的均为各产品留在本地的**私有格式**（无稳定性承诺），上游版本升级可能导致个别源解析中断——健康面板会标出，欢迎提 issue。各产品版权归其厂商所有。
+Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**私有格式**（无稳定性承诺），上游版本升级可能导致个别源解析中断——健康面板会标出，欢迎提 issue。各产品版权归其厂商所有。
 
 ## 架构
 

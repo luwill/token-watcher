@@ -4,7 +4,7 @@ import { DATA_DIR } from './config.js';
 import { ensurePrices, lookupPrice } from './litellm.js';
 
 /**
- * ccmr 费用折算：单价表 ~/.token-stats/pricing.json（用户可编辑覆盖）。
+ * ccmr 费用折算：单价表 ~/.tokenmeter/pricing.json（用户可编辑覆盖）。
  * 种子值来源（2026-09-13 抓取官方定价页）：
  *   DeepSeek api-docs.deepseek.com/quick_start/pricing（美元，峰时价，谷时为其一半）
  *   Kimi platform.kimi.com/docs/pricing/chat（人民币）

@@ -1,5 +1,5 @@
 {
-  "name": "token-meter",
+  "name": "token-watcher",
   "version": "1.0.0",
   "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build)",
   "type": "module",
@@ -11,8 +11,8 @@
     "scan": "node --no-warnings bin/tokenmeter.js scan",
     "serve": "node --no-warnings bin/tokenmeter.js serve",
     "today": "node --no-warnings bin/tokenmeter.js today",
-    "bar": "open bin/token-stats-bar.app",
-    "build-bar": "swiftc -O -o bin/token-stats-bar menubar/main.swift && mkdir -p bin/token-stats-bar.app/Contents/MacOS && cp bin/token-stats-bar bin/token-stats-bar.app/Contents/MacOS/ && cp menubar/Info.plist bin/token-stats-bar.app/Contents/",
+    "bar": "open bin/token-watcher.app",
+    "build-bar": "swiftc -O -o bin/token-watcher-bin menubar/main.swift && mkdir -p bin/token-watcher.app/Contents/MacOS && cp bin/token-watcher-bin bin/token-watcher.app/Contents/MacOS/token-watcher && cp menubar/Info.plist bin/token-watcher.app/Contents/",
     "install-agent": "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
     "uninstall-agent": "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
     "test": "node --no-warnings test/run.mjs"

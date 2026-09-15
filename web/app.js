@@ -1,4 +1,4 @@
-/* token-stats 面板：fetch /api/summary 渲染，SSE 实时刷新 */
+/* Token Watcher 面板：fetch /api/summary 渲染，SSE 实时刷新 */
 const TOOL_COLORS = {
   'claude-code': '#e07a5f', 'ccmr': '#8b7cf6', 'codex': '#34c98e',
   'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
