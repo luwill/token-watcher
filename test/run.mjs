@@ -393,8 +393,9 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
   }));
 }
 
-// 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控
-const env = { ...process.env, HOME, TOKENMETER_OFFLINE: '1' };
+// 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控。
+// USERPROFILE 是 Windows 上 os.homedir() 认的变量，只设 HOME 在那边临时家目录不生效。
+const env = { ...process.env, HOME, USERPROFILE: HOME, TOKENMETER_OFFLINE: '1' };
 const cli = (args) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), ...args], { encoding: 'utf8', env });
 
 {
@@ -441,6 +442,8 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('codex project=projC（session_meta 顶层 type）', proj.codex === 'projC');
   ok('grok project=projD（URL 解码）', proj.grok === 'projD');
   ok('zcode project=projF（session.directory）', proj.zcode === 'projF');
+  // 目录名解项目名曾用 lastIndexOf('/') / split('/')，Windows 上分隔符是反斜杠会解错
+  ok('workbuddy project=projE（目录名解析，跨平台分隔符）', proj.workbuddy === 'projE', String(proj.workbuddy));
   db.close();
 }
 
@@ -504,6 +507,13 @@ console.log('\n[4] API 冒烟');
     ok('本机 Host 正常放行', local.status === 200, String(local.status));
     const named = await rawGet('/api/summary?days=1', { host: `localhost:${port}` });
     ok('localhost 也放行（浏览器常用）', named.status === 200, String(named.status));
+
+    // ECharts 拿不到 = app.js 在 echarts.init 处抛错 = 整页空白。1.2.0 就是这么坏的：
+    // 路径写死成 <本包>/node_modules/echarts，而 npm 安装时 echarts 被提升到顶层。
+    const ec = await fetch(`http://127.0.0.1:${port}/vendor/echarts.min.js`);
+    ok('ECharts 能取到（取不到就整页空白）', ec.status === 200, String(ec.status));
+    ok('ECharts 内容像是 JS 而非错误页',
+      (ec.headers.get('content-type') || '').includes('javascript'), ec.headers.get('content-type'));
   }
   child.kill('SIGTERM');
 }

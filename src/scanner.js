@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { watch as watchCb } from 'node:fs';
+import { watch as watchCb, existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { SOURCES } from './config.js';
@@ -214,6 +214,8 @@ export class Scanner extends EventEmitter {
       for (const root of src.roots) {
         // sqlite 源：WAL 写入不改变主文件，必须监听父目录才能收到 -wal 变更事件
         const watchDir = src.kind === 'sqlite' ? dirname(root) : root;
+        // 目录不存在 = 用户没装这个工具，属正常情况，不该刷一行 watch failed 吓人
+        if (!existsSync(watchDir)) continue;
         try {
           const w = watchCb(watchDir, { recursive: true }, () => this._scheduleScan());
           this._watchers.push(w);

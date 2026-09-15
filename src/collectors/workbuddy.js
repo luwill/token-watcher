@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { readLinesFrom } from './lines.js';
 import { normalizeModel } from '../models.js';
 
@@ -19,7 +19,9 @@ function projectFromDir(fileDir) {
 
 export async function collectWorkbuddyFile(store, { tool, path, fileId, offset }) {
   let inserted = 0;
-  const project = projectFromDir(path.slice(0, path.lastIndexOf('/')));
+  // 用 dirname 而不是 lastIndexOf('/')：Windows 上分隔符是反斜杠，
+  // 原写法找不到 '/' 会退化成 slice(0, -1)，把项目名切成文件名的残片
+  const project = projectFromDir(dirname(path));
 
   const { newOffset } = await readLinesFrom(path, offset, (line) => {
     if (!line.includes('"usage"')) return;

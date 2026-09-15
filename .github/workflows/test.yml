@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
         node: ['22.13', '24']
     runs-on: ${{ matrix.os }}
     steps:
@@ -22,6 +22,48 @@ jobs:
       # 只装 echarts（前端 UMD 用），零其他依赖
       - run: npm ci --omit=dev || npm install --no-audit --no-fund
       - run: npm test
+
+  # 装成依赖后是否真的能用。仓库内直接跑一切正常，但 npm 会把 echarts 提升到顶层
+  # node_modules，写死的嵌套路径就失效 → /vendor/echarts.min.js 404 → 整页空白。
+  # 1.2.0 正是这样发布出去的，本地测试全绿却装上就白屏，所以必须按真实安装路径测一遍。
+  install-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13'
+      - run: npm install --no-audit --no-fund
+      - name: 打包并装进一个干净工程
+        shell: bash
+        run: |
+          npm pack --silent
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/token-watcher-*.tgz
+      - name: 起服务并检查关键资源
+        shell: bash
+        env:
+          TOKENMETER_OFFLINE: '1'
+        run: |
+          cd "$RUNNER_TEMP/consumer"
+          node node_modules/token-watcher/bin/tokenwatcher.js serve --port 8799 &
+          for i in $(seq 1 40); do
+            curl -sf -o /dev/null "http://127.0.0.1:8799/api/summary?days=1" && break
+            sleep 1
+          done
+          fail=0
+          for p in "/" "/app.js" "/lib/format.js" "/lib/series.js" "/vendor/echarts.min.js"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8799$p")
+            echo "$p -> $code"
+            [ "$code" = "200" ] || fail=1
+          done
+          exit $fail
 
   # 模块级错误（缺失导出、只读属性赋值）过不了 import，但 node --check 抓不到：
   # 线上 12 次启动崩溃全属此类，必须单独冒烟

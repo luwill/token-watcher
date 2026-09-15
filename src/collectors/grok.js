@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { readLinesFrom } from './lines.js';
 import { normalizeModel } from '../models.js';
 
@@ -10,11 +10,11 @@ import { normalizeModel } from '../models.js';
  * - 工具调用在 tool_call 事件（title/kind 为名，toolCallId 去重）；
  * - timestamp 为 Unix 秒（防御性兼容毫秒）。
  */
-function projectFromDir(path) {
-  // .../sessions/<项目目录(URL编码)>/<会话uuid>/updates.jsonl → 取项目目录
-  const parts = path.split('/');
-  const sessionDir = parts[parts.length - 2];
-  const projDir = parts[parts.length - 3] || sessionDir;
+function projectFromDir(p) {
+  // .../sessions/<项目目录(URL编码)>/<会话uuid>/updates.jsonl → 取项目目录。
+  // 用 dirname/basename 而不是 split('/')：Windows 上分隔符是反斜杠，
+  // 按 '/' 切会得到单元素数组，取到 undefined。
+  const projDir = basename(dirname(dirname(p))) || basename(dirname(p));
   try { return basename(decodeURIComponent(projDir)); } catch { return basename(projDir); }
 }
 
