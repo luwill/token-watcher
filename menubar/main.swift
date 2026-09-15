@@ -1,5 +1,5 @@
-// TokenMeter 菜单栏胶囊：轮询本地 /api/summary，常驻显示今日消耗与配额。
-// 编译：swiftc -O -o bin/token-stats-bar menubar/main.swift
+// Token Watcher 菜单栏胶囊：轮询本地 /api/summary，常驻显示今日消耗与配额。
+// 编译：npm run build-bar
 import AppKit
 import Foundation
 import UserNotifications
