@@ -12,7 +12,7 @@ let heatMode = 'd';
 let lastSummary = null;
 
 const charts = {};
-for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday']]) {
+for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday'], ['density', 'ch-density']]) {
   const el = document.getElementById(id);
   if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
 }
@@ -66,6 +66,7 @@ function render() {
   safe('live', () => renderLive(s.live));
   safe('trend', () => renderTrend(s.by_day));
   safe('costday', () => renderCostDay(s.costs?.by_day));
+  safe('density', () => renderDensity(s.by_day, s.totals.peak_day_tokens));
   safe('model', () => renderModel(s.by_model));
   safe('tool', () => renderTool(s.by_tool));
   safe('heat', () => renderHeatmap(s.by_day_all));
@@ -394,6 +395,43 @@ document.getElementById('sess-date').addEventListener('change', () => loadSessio
 document.getElementById('export-btn').addEventListener('click', () => {
   window.open(`/api/export.csv?days=${days}`, '_blank');
 });
+
+/** 逐日总 token 密度条：单行热力（heatmap，y 恒 0），绿阶分档 */
+function renderDensity(byDay, peak) {
+  if (!charts.density || !byDay?.length) return;
+  const max = peak || Math.max(...byDay.map(d => d.total), 1);
+  const STOPS = ['#1b1b24', '#0e2a1f', '#0e4429', '#006d32', '#26a641', '#39d353'];
+  charts.density.setOption({
+    animationDuration: 300,
+    tooltip: {
+      backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
+      formatter: (p) => `${p.name}<br/>${fmt(p.value)} tokens`,
+    },
+    grid: { left: 46, right: 12, top: 10, bottom: 26 },
+    xAxis: {
+      type: 'category', data: byDay.map(d => d.day.slice(5)),
+      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 10, interval: Math.ceil(byDay.length / 12) - 1 },
+      axisLine: { lineStyle: { color: '#262636' } }, axisTick: { show: false },
+    },
+    yAxis: { type: 'value', max: 1, min: 0, axisLabel: { show: false }, axisLine: { show: false }, splitLine: { show: false } },
+    visualMap: {
+      type: 'piecewise', min: 0, max, show: false, seriesIndex: 0,
+      pieces: [
+        { max: 0, color: STOPS[0] },
+        { gt: 0, lte: max * 0.15, color: STOPS[1] },
+        { gt: max * 0.15, lte: max * 0.35, color: STOPS[2] },
+        { gt: max * 0.35, lte: max * 0.6, color: STOPS[3] },
+        { gt: max * 0.6, lte: max * 0.85, color: STOPS[4] },
+        { gt: max * 0.85, color: STOPS[5] },
+      ],
+    },
+    series: [{
+      type: 'heatmap',
+      data: byDay.map(d => [d.day.slice(5), 0.5, d.total]),  // [x, y恒定, 原始值供分档]
+      itemStyle: { borderRadius: 2, borderColor: '#0b0b10', borderWidth: 1 },
+    }],
+  }, true);
+}
 
 function renderModel(byModel) {
   const rows = [...byModel].reverse(); // 横向条形图自下而上
