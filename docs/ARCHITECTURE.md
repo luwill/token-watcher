@@ -68,6 +68,33 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 
 每源接入后用独立脚本（Python/独立 SQL）对原始文件重算比对，全部精确一致。Codex 的正确口径经"官方面板累计值 vs 本地差分值"交叉验证（差值为官方跨设备统计）。WorkBuddy 积分费率经最小二乘残差验证。
 
+## Antigravity / antigravity-cli：调研结论是**当前不可接入**（2026-09 实测）
+
+Google Antigravity（IDE，`com.google.antigravity` 2.3.1）与 antigravity-cli 都在本机留了数据，
+但**逐请求 token 用量没有以任何可解析的形式落地**。逐项证据：
+
+| 位置 | 形态 | 有无用量 |
+|---|---|---|
+| `~/.gemini/antigravity-cli/conversation_summaries.db` | SQLite，1 张表 | 无。只有 title / step_count / workspace_uris / status 等元数据 |
+| `~/.gemini/antigravity-cli/conversations/*.db` | SQLite，per-conversation | `steps`、`gen_metadata` 表存在但为空；载荷列是 protobuf blob |
+| `~/.gemini/antigravity-cli/conversations/*.pb` | 二进制，768KB–1.2MB | **熵 8.00 bit/byte、可打印占比 37%、文件头各不相同且无压缩魔数**（非 gzip/zstd/zlib/brotli）→ 加密，非明文 protobuf。密钥在系统钥匙串（日志里有 `keyring.go`） |
+| `~/.gemini/*/brain/**/transcript.jsonl` | 可读 JSONL | 无。1628 条记录、112 个键路径里**没有一个**匹配 token/usage/cost/billing；唯一数值叶子是 `step_index` |
+| `~/.gemini/*/antigravity_state.pbtxt` | 文本 protobuf | 无。相关字段只有 `last_selected_agent_model` |
+| `~/Library/Application Support/Antigravity` | Electron 目录 | 无。`app_storage.json` 为空，Local Storage 里无 token 字样 |
+
+transcript.jsonl 的顶层键是 `step_index / source / type / status / created_at / content /
+tool_calls / thinking`——有完整的对话与工具调用，唯独没有 usage。直接 grep 到的 "token"
+字样全部来自对话正文（本仓库本身就在讨论 token），不是字段名。
+
+**留一个重要的保留**：实测机器的 CLI 日志反复出现 `You are not logged into Antigravity`，
+会话表因此为空；5 月那批 `.pb` 确实是登录期的真实使用，但已加密。所以不能排除
+"登录且活跃使用的装机会把用量写到别处"。要复核，在真正用过之后重跑调研：按上表逐个位置
+确认，重点看 `conversations/*.db` 的 `gen_metadata`（列名 `data`/`size`，最像放生成元数据的地方）
+是否开始有行。
+
+结论：**在拿到可解析的用量来源之前不接**。写一个解析猜测字段的采集器，只会做出一个
+永远报 0 却在健康面板显示"正常"的数据源，比不接更有害。
+
 ## 不可统计的边界
 
 网页版聊天（ChatGPT/豆包/DeepSeek 网页、Grok Bot 等 Electron 薄壳）：token 计数在服务端，浏览器本地零留痕（实测 IndexedDB 无 usage 字段），且无公开用量 API。除非厂商开放 API 或用户接受浏览器扩展拦截（高维护成本、随改版失效），否则不可覆盖。
