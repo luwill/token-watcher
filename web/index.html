@@ -55,9 +55,15 @@
   </section>
 
   <section class="charts two-col">
-    <div class="col col-left">
+    <div class="pair">
       <div class="panel"><h2>按天消耗（按工具堆叠，点击某天查看会话）</h2><div id="ch-trend" class="chart"></div></div>
+      <div class="panel"><h2>逐日消耗</h2><div id="ch-density" class="chart density-chart"></div></div>
+    </div>
+    <div class="pair">
       <div class="panel"><h2>按天花费（按模型堆叠，¥）</h2><div id="ch-costday" class="chart"></div></div>
+      <div class="panel"><h2>模型 Top 10</h2><div id="ch-model" class="chart"></div></div>
+    </div>
+    <div class="pair">
       <div class="panel" id="sessions-panel">
         <h2>会话钻取 <span class="dim" style="font-weight:400" id="sess-day"></span>
           <input type="date" id="sess-date" style="float:right;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px">
@@ -65,12 +71,10 @@
         <div id="sess-detail" class="chart" style="display:none;height:180px"></div>
         <div class="feed" id="sessions"></div>
       </div>
-      <div class="panel"><h2>最近请求</h2><div class="feed" id="feed"></div></div>
-    </div>
-    <div class="col col-right">
-      <div class="panel"><h2>逐日消耗</h2><div id="ch-density" class="chart density-chart"></div></div>
-      <div class="panel"><h2>模型 Top 10</h2><div id="ch-model" class="chart"></div></div>
       <div class="panel"><h2>工具分布</h2><div id="ch-tool" class="chart"></div></div>
+    </div>
+    <div class="pair">
+      <div class="panel"><h2>最近请求</h2><div class="feed" id="feed"></div></div>
       <div class="panel"><h2>模型工具调用 <span class="dim" style="font-weight:400">近30天</span></h2><div id="ch-tools-act" class="chart"></div></div>
     </div>
   </section>
