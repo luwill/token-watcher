@@ -396,39 +396,37 @@ document.getElementById('export-btn').addEventListener('click', () => {
   window.open(`/api/export.csv?days=${days}`, '_blank');
 });
 
-/** 逐日总 token 密度条：单行热力（heatmap，y 恒 0），绿阶分档 */
+/** 逐日总 token 消耗密度曲线：平滑面积图（KDE 风格），高峰一目了然 */
 function renderDensity(byDay, peak) {
   if (!charts.density || !byDay?.length) return;
-  const max = peak || Math.max(...byDay.map(d => d.total), 1);
-  const STOPS = ['#1b1b24', '#0e2a1f', '#0e4429', '#006d32', '#26a641', '#39d353'];
   charts.density.setOption({
-    animationDuration: 300,
+    // 此 ECharts 构建的 bar 生长动画在该图上从不绘制（静默失败），必须关闭
+    animation: false,
+    grid: { left: 50, right: 14, top: 14, bottom: 26 },
     tooltip: {
-      backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (p) => `${p.name}<br/>${fmt(p.value)} tokens`,
+      trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
+      formatter: (params) => {
+        const p = params[0];
+        return `${p.name}<br/>${fmt(p.value)} tokens`;
+      },
     },
-    grid: { left: 46, right: 12, top: 10, bottom: 26 },
     xAxis: {
       type: 'category', data: byDay.map(d => d.day.slice(5)),
-      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 10, interval: Math.ceil(byDay.length / 12) - 1 },
+      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 10, interval: Math.ceil(byDay.length / 10) - 1 },
       axisLine: { lineStyle: { color: '#262636' } }, axisTick: { show: false },
     },
-    yAxis: { type: 'value', max: 1, min: 0, axisLabel: { show: false }, axisLine: { show: false }, splitLine: { show: false } },
-    visualMap: {
-      type: 'piecewise', min: 0, max, show: false, seriesIndex: 0,
-      pieces: [
-        { max: 0, color: STOPS[0] },
-        { gt: 0, lte: max * 0.15, color: STOPS[1] },
-        { gt: max * 0.15, lte: max * 0.35, color: STOPS[2] },
-        { gt: max * 0.35, lte: max * 0.6, color: STOPS[3] },
-        { gt: max * 0.6, lte: max * 0.85, color: STOPS[4] },
-        { gt: max * 0.85, color: STOPS[5] },
-      ],
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#8a8aa0', formatter: fmtShort, fontSize: 10 },
+      splitLine: { lineStyle: { color: '#1d1d2a' } },
     },
     series: [{
-      type: 'heatmap',
-      data: byDay.map(d => [d.day.slice(5), 0.5, d.total]),  // [x, y恒定, 原始值供分档]
-      itemStyle: { borderRadius: 2, borderColor: '#0b0b10', borderWidth: 1 },
+      type: 'bar',
+      data: byDay.map(d => d.total),
+      barMaxWidth: 18,
+      itemStyle: {
+        color: 'rgba(57, 211, 83, 0.55)', borderRadius: [4, 4, 0, 0],
+      },
     }],
   }, true);
 }
