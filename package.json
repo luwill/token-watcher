@@ -1,6 +1,6 @@
 {
   "name": "token-watcher",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build)",
   "keywords": [
     "token",
@@ -28,13 +28,14 @@
   "author": "louwill",
   "type": "module",
   "bin": {
-    "tokenmeter": "bin/tokenmeter.js"
+    "tokenwatcher": "bin/tokenwatcher.js",
+    "tokenmeter": "bin/tokenwatcher.js"
   },
   "main": "src/server.js",
   "scripts": {
-    "scan": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js scan",
-    "serve": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js serve",
-    "today": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js today",
+    "scan": "node --disable-warning=ExperimentalWarning bin/tokenwatcher.js scan",
+    "serve": "node --disable-warning=ExperimentalWarning bin/tokenwatcher.js serve",
+    "today": "node --disable-warning=ExperimentalWarning bin/tokenwatcher.js today",
     "bar": "open bin/token-watcher.app",
     "build-bar": "swiftc -O -o bin/token-watcher-bin menubar/main.swift && mkdir -p bin/token-watcher.app/Contents/MacOS && cp bin/token-watcher-bin bin/token-watcher.app/Contents/MacOS/token-watcher && cp menubar/Info.plist bin/token-watcher.app/Contents/",
     "install-agent": "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
@@ -48,7 +49,7 @@
     "echarts": "^5.5.0"
   },
   "files": [
-    "bin/tokenmeter.js",
+    "bin/tokenwatcher.js",
     "src/",
     "web/",
     "README.md",

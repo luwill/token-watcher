@@ -4,7 +4,7 @@
 
 ![Token Watcher](https://raw.githubusercontent.com/luwill/token-watcher/main/docs/screenshot.png)
 
-> 截图为真实运行数据（厂商余额已脱敏）。
+> 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
 ## 支持的工具（7 源）
 
@@ -37,14 +37,14 @@ npm run serve
 
 平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）；Linux 理论可用（Node 20+ 支持 recursive watch），未完整测试；Windows 未测试。菜单栏 App 为 macOS 专属。
 
-开发与测试：`npm test` 运行三层回归——语法检查、静态断言（渲染函数存在性/DOM id 一致性）、端到端冒烟（fixtures 黄金数字 + 幂等 + API 结构），零依赖、可跑在 CI。
+开发与测试：`npm test` 运行五层回归——语法检查、import 冒烟（拦模块级错误，`node --check` 看不见）、静态断言、前端纯函数行为、端到端冒烟（fixtures 黄金数字 + 幂等 + API 结构）。零依赖、离线运行，GitHub Actions 上跑 macOS/Ubuntu × Node 22.13/24 矩阵。
 
 其他命令：
 
 ```bash
-tokenmeter today       # 终端速览今日消耗
-tokenmeter scan        # 只扫描一次
-tokenmeter serve --port 9000
+tokenwatcher today       # 终端速览今日消耗
+tokenwatcher scan        # 只扫描一次
+tokenwatcher serve --port 9000
 npm run install-agent  # launchd 开机自启（KeepAlive 崩溃自拉起）
 npm run bar            # macOS 菜单栏胶囊（需 npm run build-bar 编译）
 ```
@@ -93,9 +93,10 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 ## Roadmap
 
 - 跨平台验证（Linux/Windows）
-- fixtures 回归测试 + CI
+- 订阅 ROI 视角：API 等值成本 vs 订阅实付
+- 按项目维度的用量与花费
+- 配置文件（数据目录 / 端口 / 告警阈值）
 - i18n / 英文 README
-- 会话内容级钻取（如需）
 
 ## License
 

@@ -395,7 +395,7 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
 
 // 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控
 const env = { ...process.env, HOME, TOKENMETER_OFFLINE: '1' };
-const cli = (args) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenmeter.js'), ...args], { encoding: 'utf8', env });
+const cli = (args) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), ...args], { encoding: 'utf8', env });
 
 {
   const r1 = cli(['scan']);
@@ -465,7 +465,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 console.log('\n[4] API 冒烟');
 {
   const port = await new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
-  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenmeter.js'), 'serve', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), 'serve', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let buf = '';
   child.stdout.on('data', d => { buf += d; });
   const started = await new Promise(r => { const t = setTimeout(() => r(false), 30000); child.stdout.on('data', () => { if (buf.includes('listening')) { clearTimeout(t); r(true); } }); });
