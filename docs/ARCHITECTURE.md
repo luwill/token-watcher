@@ -84,7 +84,10 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
    多 1px 都会被摊进行距导致栅格不对称（同理 `left`+`right` 会拉宽格子）；
 3. **custom series 元素的鼠标命中检测不可靠**：`dispatchAction showTip` 正常但真实
    mousemove 不触发。解决：容器监听 mousemove + `convertFromPixel` 反查日期 +
-   半格命中校验的自管理 tooltip（见 `bindHeatTooltip`）。
+   半格命中校验的自管理 tooltip（见 `bindHeatTooltip`）；
+4. **line series 渲染不确定**（同配置时有时无，bar 的生长动画同样会挂起不落帧）——
+   逐日密度曲线最终改为**纯 Canvas 手绘**（贝塞尔平滑 + 渐变填充 + 自管理悬停），
+   行为完全确定。前端图表遇到玄学空白时优先考虑自绘。
 
 相关回归防护：`test/run.mjs` 的静态断言层（safe() 调用的函数必须存在、DOM id 一致性）
 与端到端冒烟层（fixtures 黄金数字、幂等、API 结构）。历史事故：误删 renderLive 导致

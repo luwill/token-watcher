@@ -12,7 +12,7 @@ let heatMode = 'd';
 let lastSummary = null;
 
 const charts = {};
-for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday'], ['density', 'ch-density']]) {
+for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday']]) {
   const el = document.getElementById(id);
   if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
 }
@@ -66,7 +66,7 @@ function render() {
   safe('live', () => renderLive(s.live));
   safe('trend', () => renderTrend(s.by_day));
   safe('costday', () => renderCostDay(s.costs?.by_day));
-  safe('density', () => renderDensity(s.by_day, s.totals.peak_day_tokens));
+  safe('density', () => renderDensity(s.by_day));
   safe('model', () => renderModel(s.by_model));
   safe('tool', () => renderTool(s.by_tool));
   safe('heat', () => renderHeatmap(s.by_day_all));
@@ -396,39 +396,96 @@ document.getElementById('export-btn').addEventListener('click', () => {
   window.open(`/api/export.csv?days=${days}`, '_blank');
 });
 
-/** 逐日总 token 消耗密度曲线：平滑面积图（KDE 风格），高峰一目了然 */
-function renderDensity(byDay, peak) {
-  if (!charts.density || !byDay?.length) return;
-  charts.density.setOption({
-    // 此 ECharts 构建的 bar 生长动画在该图上从不绘制（静默失败），必须关闭
-    animation: false,
-    grid: { left: 50, right: 14, top: 14, bottom: 26 },
-    tooltip: {
-      trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (params) => {
-        const p = params[0];
-        return `${p.name}<br/>${fmt(p.value)} tokens`;
-      },
-    },
-    xAxis: {
-      type: 'category', data: byDay.map(d => d.day.slice(5)),
-      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 10, interval: Math.ceil(byDay.length / 10) - 1 },
-      axisLine: { lineStyle: { color: '#262636' } }, axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { color: '#8a8aa0', formatter: fmtShort, fontSize: 10 },
-      splitLine: { lineStyle: { color: '#1d1d2a' } },
-    },
-    series: [{
-      type: 'bar',
-      data: byDay.map(d => d.total),
-      barMaxWidth: 18,
-      itemStyle: {
-        color: 'rgba(57, 211, 83, 0.55)', borderRadius: [4, 4, 0, 0],
-      },
-    }],
-  }, true);
+/**
+ * 逐日总 token 消耗密度曲线：纯 Canvas 手绘（ECharts line 在此构建渲染不稳定，
+ * 时有时无；自绘贝塞尔平滑曲线 + 渐变填充 + 自管理悬停，行为完全确定）。
+ */
+function renderDensity(byDay) {
+  const host = document.getElementById('ch-density');
+  if (!host || !byDay?.length) return;
+  const W = host.clientWidth || 300, H = host.clientHeight || 120;
+  const dpr = window.devicePixelRatio || 1;
+  let canvas = host.querySelector('canvas');
+  if (!canvas) { canvas = document.createElement('canvas'); host.appendChild(canvas); }
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 46, padR = 10, padT = 12, padB = 22;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const vals = byDay.map(d => d.total);
+  const max = Math.max(...vals, 1);
+  const px = (i) => padL + (byDay.length === 1 ? iw / 2 : (i / (byDay.length - 1)) * iw);
+  const py = (v) => padT + ih - (v / max) * ih;
+
+  // 横向网格线 + y 轴刻度（4 档）
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let k = 0; k <= 4; k++) {
+    const y = padT + ih - (k / 4) * ih;
+    ctx.strokeStyle = '#1d1d2a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#8a8aa0';
+    ctx.fillText(fmtShort(max * k / 4), padL - 6, y);
+  }
+  // x 轴日期（最多 8 个）
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const step = Math.max(1, Math.ceil(byDay.length / 8));
+  for (let i = 0; i < byDay.length; i += step) {
+    ctx.fillText(byDay[i].day.slice(5), px(i), padT + ih + 6);
+  }
+
+  // 平滑曲线（中点二次贝塞尔）+ 渐变填充
+  const pts = vals.map((v, i) => [px(i), py(v)]);
+  const stroke = () => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+    }
+    ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+  };
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + ih);
+  grad.addColorStop(0, 'rgba(57, 211, 83, 0.42)');
+  grad.addColorStop(1, 'rgba(57, 211, 83, 0.03)');
+  stroke();
+  ctx.lineTo(px(vals.length - 1), padT + ih); ctx.lineTo(px(0), padT + ih); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  stroke();
+  ctx.strokeStyle = '#39d353'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+
+  // 自管理悬停（复用 heat-tip 样式）
+  host.__densityData = byDay;
+  if (!host.__densityTipBound) {
+    host.__densityTipBound = true;
+    let tip = document.createElement('div');
+    tip.className = 'heat-tip';
+    document.body.appendChild(tip);
+    host.addEventListener('mousemove', (e) => {
+      const data = host.__densityData;
+      if (!data?.length) return;
+      const rect = host.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const iw2 = rect.width - 46 - 10;
+      const idx = Math.round(((x - 46) / iw2) * (data.length - 1));
+      if (idx < 0 || idx >= data.length || x < 40) { tip.style.display = 'none'; return; }
+      const d = data[idx];
+      tip.innerHTML = `${d.day}<br>当日 ${fmt(d.total)} tokens`;
+      tip.style.display = 'block';
+      let tx = e.clientX + 12, ty = e.clientY - 40;
+      if (tx + tip.offsetWidth > window.innerWidth - 8) tx = e.clientX - tip.offsetWidth - 12;
+      tip.style.left = tx + 'px'; tip.style.top = ty + 'px';
+    });
+    host.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  }
+  // 窗口尺寸变化时重绘（挂到 host 上避免重复绑定）
+  if (!host.__densityResize) {
+    host.__densityResize = true;
+    const ro = new ResizeObserver(() => { if (host.__densityData) renderDensity(host.__densityData); });
+    ro.observe(host);
+  }
 }
 
 function renderModel(byModel) {
