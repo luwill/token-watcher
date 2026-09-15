@@ -68,7 +68,7 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .heat-legend i { width: 11px; height: 9px; border-radius: 2px; display: inline-block; }
 
 .charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.charts.two-col { grid-template-columns: 1.22fr 1fr; align-items: start; }
+.charts.two-col { grid-template-columns: 2fr 1fr; align-items: start; }
 .charts.two-col .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
 .panel h2 { font-size: 13px; font-weight: 600; color: var(--dim); margin-bottom: 8px; }
