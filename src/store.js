@@ -97,6 +97,8 @@ export class Store {
     this.db = new DatabaseSync(dbPath);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA synchronous = NORMAL');
+    // 常驻 serve 与一次性 CLI（today/scan）会并发访问同一库：不设超时则立刻 SQLITE_BUSY
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(SCHEMA);
     migrate(this.db);
     this._insertEvent = this.db.prepare(`

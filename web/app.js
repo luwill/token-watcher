@@ -1,12 +1,13 @@
-/* Token Watcher 面板：fetch /api/summary 渲染，SSE 实时刷新 */
-const TOOL_COLORS = {
-  'claude-code': '#e07a5f', 'ccmr': '#8b7cf6', 'codex': '#34c98e',
-  'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
-};
-const TOOL_LABEL = {
-  'claude-code': 'Claude Code', 'ccmr': 'ccmr', 'codex': 'Codex',
-  'zcode': 'ZCode', 'dsh': 'dsh', 'workbuddy': 'WorkBuddy', 'grok': 'Grok',
-};
+/* Token Watcher 面板：fetch /api/summary 渲染，SSE 实时刷新。
+ * 纯逻辑（格式化/系列选择/配色/悬浮框定位）在 lib/ 下，可被 test/run.mjs 直接 import。
+ * ECharts 走全局 UMD（index.html 里的 <script>），不参与模块图。 */
+import { esc, fmt, fmtShort, hhmm, ymd } from './lib/format.js';
+import {
+  TOOL_COLORS, TOOL_LABEL, MODEL_PALETTE, OTHER_COLOR, OTHER_DECAL, HEAT_COLORS, HEAT_EMPTY,
+} from './lib/theme.js';
+import { pickSeries, assignSlots, stackTipFormatter, dayAxis, fillDays } from './lib/series.js';
+import { chartTooltip as makeTooltip } from './lib/tooltip.js';
+
 let days = 7;
 let heatMode = 'd';
 let lastSummary = null;
@@ -35,25 +36,39 @@ window.addEventListener('resize', () => {
   setTimeout(() => { if (lastSummary) renderHeatmap(lastSummary.by_day_all); }, 150);
 });
 
-const fmt = (n) => {
-  n = n || 0;
-  if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
-  if (n >= 1e4) return (n / 1e4).toFixed(1) + ' 万';
-  return String(Math.round(n));
-};
-const fmtShort = (n) => {
-  n = n || 0;
-  if (n >= 1e8) return (n / 1e8).toFixed(1) + '亿';
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
-  return String(n);
-};
-const hhmm = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+/** 按 charts 里的实例名取容器，交给统一的悬浮框配置（定位与裁切处理在 lib/tooltip.js） */
+const chartTooltip = (key, extra = {}) => makeTooltip(charts[key].getDom(), extra);
+
+const MODEL_SLOT = new Map(); // 模型名 → 色槽，跨渲染保留，保证同名恒同色
+const TOOL_SLOT = new Map();  // 同上，给不在 TOOL_COLORS 里的新工具兜底色
+
+// ECharts 不会让图例避让 x 轴标签，底部留白得自己算：
+// 旋转 45° 的日期标签更占高度，图例换行后按两行预留
+const LEGEND_H = 46;
+const gridBottom = (rowCount) => (rowCount > 31 ? 44 : 22) + LEGEND_H;
+
+// 按天消耗与按天花费上下相邻，必须共用柱宽上限与绘图区边距，
+// 否则两图类目数/绘图区宽不同时，柱子实际渲染宽度就对不上
+const BAR_MAX_W = 24; // dataviz 规范：柱宽 ≤24px，不填满类目槽，留白给间隙
+const DAY_GRID = { left: 70, right: 16, top: 14 };
 
 async function load() {
-  const res = await fetch(`/api/summary?days=${days}`);
-  lastSummary = await res.json();
-  render();
+  const banner = document.getElementById('load-error');
+  try {
+    const res = await fetch(`/api/summary?days=${days}`);
+    if (!res.ok) throw new Error(`服务返回 ${res.status}`);
+    const data = await res.json();
+    // 后端出错时返回的是 {error}，直接喂给 render() 会在 totals 上抛 TypeError
+    if (!data?.totals) throw new Error(data?.error || '响应缺少 totals');
+    lastSummary = data;
+    if (banner) banner.hidden = true;
+    render();
+  } catch (err) {
+    // 静默失败会让页面停在旧数字上却毫无迹象——宁可显眼地说明"这是上次的数据"
+    if (!banner) return;
+    banner.textContent = `数据刷新失败：${err.message}。当前显示的是上次成功获取的数据。`;
+    banner.hidden = false;
+  }
 }
 
 function render() {
@@ -77,6 +92,7 @@ function render() {
   safe('status', () => renderStatus(s.quota, s.balances, s.wb_rates, s.recon, s.costs));
   safe('health', () => renderHealth(s.health));
   safe('live', () => renderLive(s.live));
+  safe('balanceStatus', () => renderBalanceStatus(s.balance_status));
   safe('trend', () => renderTrend(s.by_day));
   safe('costday', () => renderCostDay(s.costs?.by_day));
   safe('density', () => renderDensity(s.by_day));
@@ -99,11 +115,11 @@ function renderStatus(quota, balances, rates, recon, costs) {
     const d = q.data;
     html += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">Codex 周配额</span>
-        <span class="q-plan">${d.plan_type ?? ''}</span>
+        <span class="q-plan">${esc(d.plan_type)}</span>
         <span class="q-reset">${d.window_minutes ? (d.window_minutes / 1440).toFixed(0) + ' 天窗口' : ''}</span></div>
-      <div class="q-bar"><div class="q-fill" style="width:${(d.used_percent ?? 0)}%"></div></div>
+      <div class="q-bar"><div class="q-fill" style="width:${Number(d.used_percent) || 0}%"></div></div>
       <div class="q-meta"><span>已用 ${(d.used_percent ?? 0).toFixed(1)}%</span>
-        <span class="dim">重置 <b class="cd" data-at="${d.resets_at ?? ''}">--</b></span></div>
+        <span class="dim">重置 <b class="cd" data-at="${esc(d.resets_at)}">--</b></span></div>
     </div>`;
   }
 
@@ -129,8 +145,8 @@ function renderStatus(quota, balances, rates, recon, costs) {
       reconLine = `<div class="recon dim">${ok} ${rc.hours}h 余额 ${rc.delta.toFixed(2)} ¥ vs 统计 ${-rc.spend.toFixed(2)} ¥</div>`;
     }
     html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">${b.provider} 余额</span>
-        <span class="q-reset">${b.currency || ''}</span></div>
+      <div class="quota-head"><span class="q-title">${esc(b.provider)} 余额</span>
+        <span class="q-reset">${esc(b.currency)}</span></div>
       <div class="q-meta" style="margin-top:2px">
         <span style="font-size:20px;font-weight:650">¥ ${Number(b.balance).toFixed(2)}</span>
         <span class="dim">${new Date(b.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新</span>
@@ -141,12 +157,12 @@ function renderStatus(quota, balances, rates, recon, costs) {
 
   // API 花费
   if (costs && (costs.today_cny > 0 || costs.all_cny > 0)) {
-    const chips = (costs.by_tool || []).slice(0, 4)
-      .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · ');
-    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${costs.unpriced.join(', ')}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
+    const chips = esc((costs.by_tool || []).slice(0, 4)
+      .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · '));
+    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${esc(costs.unpriced.join(', '))}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
     html += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
-        <span class="q-reset" title="${costs.fx_ts ? '汇率时间 ' + new Date(costs.fx_ts).toLocaleString('zh-CN') : ''}">USD×${costs.usd_to_cny}${costs.fx_source === 'manual' ? '' : ' ·实时'}</span></div>
+        <span class="q-reset" title="${costs.fx_ts ? '汇率时间 ' + esc(new Date(costs.fx_ts).toLocaleString('zh-CN')) : ''}">USD×${esc(costs.usd_to_cny)}${costs.fx_source === 'manual' ? '' : ' ·实时'}</span></div>
       <div class="q-meta" style="margin-top:2px">
         <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
         <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
@@ -160,7 +176,7 @@ function renderStatus(quota, balances, rates, recon, costs) {
   // WorkBuddy 费率
   if (rates?.length) {
     const rows = rates.map(r => `<tr>
-      <td>${r.model}</td><td>${r.fresh_rate.toFixed(1)}</td>
+      <td>${esc(r.model)}</td><td>${r.fresh_rate.toFixed(1)}</td>
       <td class="dim">${r.cache_rate.toFixed(1)}</td><td>${r.out_rate.toFixed(1)}</td><td class="dim">${r.turns}</td>
     </tr>`).join('');
     html += `<div class="quota-card rates-card">
@@ -174,58 +190,47 @@ function renderStatus(quota, balances, rates, recon, costs) {
 }
 
 /** 按天花费（模型堆叠柱形图） */
-const MODEL_PALETTE = ['#e07a5f', '#34c98e', '#5aa9e6', '#f2c14e', '#8b7cf6', '#f78fb3', '#4ea8de', '#e6edf3'];
 function renderCostDay(byDay) {
   if (!charts.costday || !byDay?.length) return;
   // DeepSeek 家模型统一归并为 deepseek-v4.1-flash 展示（按用户口径）
   const displayName = (m) => m.startsWith('deepseek') ? 'deepseek-v4.1-flash' : m;
-  const merged = new Map(); // 显示名 -> 逐日成本
-  for (const d of byDay) {
-    const dayMap = new Map();
-    for (const [m, c] of Object.entries(d.models)) {
+  const byDayMap = new Map(byDay.map(d => [d.day, d]));
+  // 与按天消耗共用同一条日期轴（同样补洞），否则类目数不同、柱子无法对齐等宽
+  const rows = dayAxis(byDay, days || 90).map((day) => {
+    const models = {};
+    for (const [m, c] of Object.entries(byDayMap.get(day)?.models || {})) {
       const n = displayName(m);
-      dayMap.set(n, (dayMap.get(n) || 0) + c);
+      models[n] = (models[n] || 0) + c;
     }
-    merged.set(d.day, dayMap);
-  }
-  const modelSet = new Set();
-  for (const dayMap of merged.values()) dayMap.forEach((_, m) => modelSet.add(m));
-  const totalOf = (m) => [...merged.values()].reduce((s, dm) => s + (dm.get(m) || 0), 0);
-  const ranked = [...modelSet].sort((a, b) => totalOf(b) - totalOf(a));
-  const models = ranked.slice(0, 7);
-  // DeepSeek 系有消耗则固定保留（成本虽低但用户重点关注），挤掉榜尾非 deepseek 项
-  const ds = 'deepseek-v4.1-flash';
-  if (modelSet.has(ds) && !models.includes(ds)) {
-    for (let i = models.length - 1; i >= 0; i--) {
-      if (!models[i].startsWith('deepseek')) { models[i] = ds; break; }
-    }
-  }
+    return { day, models };
+  });
+  const { keys, rest } = pickSeries(rows, r => r.models, MODEL_PALETTE.length);
+  const slots = assignSlots(keys, MODEL_PALETTE.length, MODEL_SLOT);
+  const otherName = rest.length ? `其他(${rest.length})` : '';
+  const sumOf = (names, day) => names.reduce((s, n) => s + (day[n] || 0), 0);
+  const barOf = (name, names, itemStyle) => ({
+    name, type: 'bar', stack: 'c', barMaxWidth: BAR_MAX_W, itemStyle,
+    data: rows.map(r => { const v = sumOf(names, r.models); return v > 0 ? +v.toFixed(4) : 0; }),
+  });
+  const series = keys.map(n => barOf(n, [n], { color: MODEL_PALETTE[slots.get(n)] }));
+  if (rest.length) series.push(barOf(otherName, rest, { color: OTHER_COLOR, decal: OTHER_DECAL }));
   charts.costday.setOption({
     animationDuration: 300,
-    grid: { left: 50, right: 12, top: 14, bottom: 46 },
-    tooltip: {
-      trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      // 只列当日实际有花费的模型（¥0.00 的不显示），按金额降序
-      formatter: (params) => {
-        const used = params.filter(p => p.value > 0.005).sort((a, b) => b.value - a.value);
-        const total = used.reduce((s, p) => s + p.value, 0);
-        const lines = used.map(p => `${p.marker} ${p.seriesName}　¥${p.value.toFixed(2)}`).join('<br>');
-        return `${params[0].axisValue}<br><b>合计 ¥${total.toFixed(2)}</b><br>${lines || '无花费'}`;
-      },
-    },
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, type: 'scroll' },
+    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) },
+    tooltip: chartTooltip('costday', {
+      trigger: 'axis',
+      formatter: stackTipFormatter(
+        (v) => `¥${v.toFixed(2)}`, i => rows[i]?.models || {}, rest, otherName, 0.005),
+    }),
+    // plain（默认）会换行铺开，保证每条系列都能直接看到，不用翻页
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
     xAxis: {
-      type: 'category', data: byDay.map(d => d.day.slice(5)),
-      axisLabel: { color: '#8a8aa0', rotate: byDay.length > 31 ? 45 : 0, fontSize: 11 },
+      type: 'category', data: rows.map(d => d.day.slice(5)),
+      axisLabel: { color: '#8a8aa0', rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
       axisLine: { lineStyle: { color: '#262636' } },
     },
     yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
-    series: models.map((m, i) => ({
-      name: m, type: 'bar', stack: 'c',
-      data: [...merged.values()].map(dm => +(dm.get(m) || 0).toFixed(4)),
-      itemStyle: { color: m === 'deepseek-v4.1-flash' ? '#5aa9e6' : MODEL_PALETTE[i % MODEL_PALETTE.length] },
-      barMaxWidth: 22,
-    })),
+    series,
   }, true);
 }
 
@@ -239,6 +244,19 @@ function renderLive(live) {
   el.innerHTML = `<i style="background:#e6edf3"></i>Grok 进行中<b>上下文 ${fmtShort(live.grok.context_tokens)}</b>`;
   el.title = `${live.grok.project ?? ''} · 用量将在轮次结束时落盘`;
   host.appendChild(el);
+}
+
+/** 被熔断的余额源：静默停用比一直刷错误更难排查，明确标出来并给出原因 */
+function renderBalanceStatus(list) {
+  const host = document.getElementById('health');
+  if (!host || !list?.length) return;
+  for (const s of list) {
+    const el = document.createElement('span');
+    el.className = 'h-chip';
+    el.innerHTML = `<i style="background:#e0b34c"></i>${esc(s.id)} 余额<em class="warn"> 已停用</em>`;
+    el.title = s.reason || '';
+    host.appendChild(el);
+  }
 }
 
 /** 数据源健康条 */
@@ -255,8 +273,8 @@ function renderHealth(health) {
   const dot = { ok: '#39d353', empty: '#55556a', stale: '#e0b34c', error: '#e0655f' };
   const label = { ok: '', empty: ' 无数据', stale: ' 疑似停更', error: ' 解析错误' };
   host.innerHTML = health.map(h =>
-    `<span class="h-chip" title="${h.last_error || (h.last_event_ts ? '最近事件 ' + new Date(h.last_event_ts).toLocaleString('zh-CN') : '')}">
-      <i style="background:${dot[h.status]}"></i>${TOOL_LABEL[h.tool] || h.tool}
+    `<span class="h-chip" title="${esc(h.last_error || (h.last_event_ts ? '最近事件 ' + new Date(h.last_event_ts).toLocaleString('zh-CN') : ''))}">
+      <i style="background:${dot[h.status] || '#55556a'}"></i>${esc(TOOL_LABEL[h.tool] || h.tool)}
       <b>${ago(h.last_event_ts)}</b><em class="${h.status === 'ok' ? '' : 'warn'}">${label[h.status] || ''}</em>
     </span>`).join('');
 }
@@ -272,34 +290,34 @@ setInterval(() => {
   }
 }, 1000);
 
-/** 补齐日期空洞，让 x 轴连续 */
-function fillDays(byDay, maxDays) {
-  const map = new Map(byDay.map(d => [d.day, d]));
-  if (map.size === 0) return [];
-  const daysArr = [...map.keys()].sort();
-  const first = new Date(daysArr[0] + 'T00:00:00');
-  const last = new Date(daysArr[daysArr.length - 1] + 'T00:00:00');
-  // 上限保护："全部"范围太长时不补洞直接返回
-  if ((last - first) / 864e5 > 400 || daysArr.length > maxDays * 1.5) return daysArr.map(d => map.get(d));
-  const out = [];
-  for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    out.push(map.get(key) || { day: key, tools: {}, total: 0 });
-  }
-  return out;
-}
 
 function renderTrend(byDay) {
   const rows = fillDays(byDay, days || 90);
-  const tools = Object.keys(TOOL_COLORS).filter(t => rows.some(r => r.tools[t]));
+  // 只画范围内真正用过的工具，最近用过的排前面（今天没用、范围内用过的仍保留，
+  // 否则那天的柱子没有图例可解释）；工具数超出品牌色数量时归入「其他」
+  const { keys, rest } = pickSeries(rows, r => r.tools, Object.keys(TOOL_COLORS).length);
+  const slots = assignSlots(keys.filter(t => !TOOL_COLORS[t]), MODEL_PALETTE.length, TOOL_SLOT);
+  const colorOf = (t) => TOOL_COLORS[t] || MODEL_PALETTE[slots.get(t)];
+  const labelOf = (t) => TOOL_LABEL[t] || t;
+  const otherName = rest.length ? `其他(${rest.length})` : '';
+  const sumOf = (names, day) => names.reduce((s, n) => s + (day[n] || 0), 0);
+  const barOf = (name, names, itemStyle) => ({
+    name, type: 'bar', stack: 'x', barMaxWidth: BAR_MAX_W, itemStyle,
+    data: rows.map(r => sumOf(names, r.tools) || 0),
+  });
+  const series = keys.map(t => barOf(labelOf(t), [t], { color: colorOf(t) }));
+  if (rest.length) series.push(barOf(otherName, rest, { color: OTHER_COLOR, decal: OTHER_DECAL }));
+  // 圆角只给最顶上一段
+  if (series.length) series[series.length - 1].itemStyle.borderRadius = [3, 3, 0, 0];
   charts.trend.setOption({
     animationDuration: 300,
-    grid: { left: 70, right: 16, top: 14, bottom: 46 },
-    tooltip: {
-      trigger: 'axis', backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      valueFormatter: (v) => fmt(v),
-    },
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, type: 'scroll' },
+    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) },
+    tooltip: chartTooltip('trend', {
+      trigger: 'axis',
+      formatter: stackTipFormatter(fmt, i => rows[i]?.tools || {}, rest, otherName),
+    }),
+    // plain（默认）换行铺开，工具变多或窄屏时不把条目藏进翻页
+    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
     xAxis: {
       type: 'category', data: rows.map(r => r.day.slice(5)),
       axisLabel: { color: '#8a8aa0', rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
@@ -309,12 +327,7 @@ function renderTrend(byDay) {
       type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort },
       splitLine: { lineStyle: { color: '#1d1d2a' } },
     },
-    series: tools.map(t => ({
-      name: TOOL_LABEL[t], type: 'bar', stack: 'x',
-      data: rows.map(r => r.tools[t] || 0),
-      itemStyle: { color: TOOL_COLORS[t], borderRadius: t === tools[tools.length - 1] ? [3, 3, 0, 0] : 0 },
-      barMaxWidth: 26,
-    })),
+    series,
   }, true);
 }
 
@@ -338,14 +351,13 @@ async function renderToolActivity() {
     charts.toolsAct.setOption({
       animationDuration: 300,
       grid: { left: 150, right: 40, top: 10, bottom: 30 },
-      tooltip: {
-        backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
+      tooltip: chartTooltip('toolsAct', {
         formatter: (p) => {
           const t = tools[p.dataIndex]?.tools || {};
           const src = Object.entries(t).map(([k, v]) => `${TOOL_LABEL[k] || k} ${v}`).join(' · ');
-          return `${p.name}<br/>${p.value} 次调用<br/><span style="color:#8a8aa0">${src}</span>`;
+          return `${esc(p.name)}<br/>${p.value} 次调用<br/><span style="color:#8a8aa0">${esc(src)}</span>`;
         },
-      },
+      }),
       xAxis: { type: 'value', axisLabel: { color: '#8a8aa0' }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
       yAxis: { type: 'category', data: rows.map(r => r.name), axisLabel: { color: '#c7c7d8', fontSize: 11 } },
       series: [{
@@ -374,11 +386,11 @@ async function loadSessions(day) {
     const hh = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     host.innerHTML = `<table>
       <thead><tr><th>时间段</th><th>工具</th><th>模型</th><th>项目</th><th>tokens</th><th>调用</th><th>峰值上下文(估)</th></tr></thead>
-      <tbody>${sessions.map(s => `<tr class="sess-row" data-sid="${s.session_id}">
+      <tbody>${sessions.map(s => `<tr class="sess-row" data-sid="${esc(s.session_id)}">
         <td class="dim" style="font-variant-numeric:tabular-nums">${hh(s.first_ts)}–${hh(s.last_ts)}</td>
-        <td><span class="badge ${s.tool}">${TOOL_LABEL[s.tool] || s.tool}</span></td>
-        <td class="ellip" title="${(s.models || '').split(',').filter(Boolean).join(', ')}">${(s.models || '').split(',').filter(Boolean).slice(0, 2).join(', ') || '-'}</td>
-        <td class="dim ellip-sm" title="${s.project || ''}">${s.project || '-'}</td>
+        <td><span class="badge ${esc(s.tool)}">${esc(TOOL_LABEL[s.tool] || s.tool)}</span></td>
+        <td class="ellip" title="${esc((s.models || '').split(',').filter(Boolean).join(', '))}">${esc((s.models || '').split(',').filter(Boolean).slice(0, 2).join(', ')) || '-'}</td>
+        <td class="dim ellip-sm" title="${esc(s.project)}">${esc(s.project) || '-'}</td>
         <td>${fmt(s.total)}</td>
         <td>${s.calls}</td>
         <td>${fmt(s.peak)}</td>
@@ -402,14 +414,15 @@ async function showSessionDetail(sid) {
       animationDuration: 200,
       title: { text: `${sid.slice(0, 18)}… · ${events.length} 次调用`, textStyle: { color: '#8a8aa0', fontSize: 12 }, left: 4, top: 0 },
       grid: { left: 70, right: 20, top: 30, bottom: 30 },
-      tooltip: {
-        backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-        formatter: (p) => {
-          const e = events[p.dataIndex];
+      // 这条线是 symbol:'none'，没有可命中的图元 → 必须 axis 触发，否则悬浮框永远不弹
+      tooltip: chartTooltip('sess', {
+        trigger: 'axis',
+        formatter: (params) => {
+          const e = events[params?.[0]?.dataIndex];
           if (!e) return '';
-          return `${new Date(e.ts).toLocaleTimeString('zh-CN')}<br/>输入 ${fmtShort(e.input_tokens)} · 缓存 ${fmtShort(e.cached_input)} · 输出 ${fmtShort(e.output_tokens)}`;
+          return `${new Date(e.ts).toLocaleTimeString('zh-CN')}<br/>合计 ${fmt(e.total_tokens)}<br/>输入 ${fmtShort(e.input_tokens)} · 缓存 ${fmtShort(e.cached_input)} · 输出 ${fmtShort(e.output_tokens)}`;
         },
-      },
+      }),
       xAxis: { type: 'category', data: events.map(e => new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })), axisLabel: { color: '#8a8aa0', fontSize: 10 } },
       yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
       series: [{
@@ -528,10 +541,9 @@ function renderModel(byModel) {
   charts.model.setOption({
     animationDuration: 300,
     grid: { left: 130, right: 40, top: 10, bottom: 30 },
-    tooltip: {
-      backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (p) => `${p.name}<br/>tokens ${fmt(p.value)} · ${byModel[p.dataIndex].n} 次调用`,
-    },
+    tooltip: chartTooltip('model', {
+      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${byModel[p.dataIndex].n} 次调用`,
+    }),
     xAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
     yAxis: { type: 'category', data: rows.map(r => r.model || '(未知)'), axisLabel: { color: '#c7c7d8', fontSize: 11 } },
     series: [{
@@ -545,10 +557,9 @@ function renderModel(byModel) {
 function renderTool(byTool) {
   charts.tool.setOption({
     animationDuration: 300,
-    tooltip: {
-      backgroundColor: '#1a1a25', borderColor: '#262636', textStyle: { color: '#e8e8f0', fontSize: 12 },
-      formatter: (p) => `${p.name}<br/>tokens ${fmt(p.value)} · ${byTool[p.dataIndex].n} 次调用`,
-    },
+    tooltip: chartTooltip('tool', {
+      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${byTool[p.dataIndex].n} 次调用`,
+    }),
     series: [{
       type: 'pie', radius: ['52%', '76%'], center: ['50%', '52%'],
       itemStyle: { borderColor: '#14141c', borderWidth: 2 },
@@ -559,8 +570,7 @@ function renderTool(byTool) {
 }
 
 /** 日历热力图：绿色梯度、圆角方块、月份标签在下、每日/每周/累计三模式 */
-const HEAT_COLORS = ['#0e2a1f', '#0e4429', '#006d32', '#26a641', '#39d353'];
-const HEAT_EMPTY = '#1b1b24';function heatData(byDayAll) {
+function heatData(byDayAll) {
   const dayMap = new Map(byDayAll.map(r => [r.d, r.total]));
   if (heatMode === 'w') {
     // 每周：每天着色为其所在周（周一起始）的总量
@@ -734,9 +744,9 @@ function renderFeed(recent) {
     <thead><tr><th>时间</th><th>工具</th><th>模型</th><th>项目</th><th>输入</th><th>缓存读</th><th>输出</th></tr></thead>
     <tbody>${recent.map(e => `<tr>
       <td class="dim">${hhmm(e.ts)}</td>
-      <td><span class="badge ${e.tool}">${TOOL_LABEL[e.tool] || e.tool}</span></td>
-      <td>${e.model || '<span class="dim">-</span>'}</td>
-      <td class="dim">${e.project || '-'}</td>
+      <td><span class="badge ${esc(e.tool)}">${esc(TOOL_LABEL[e.tool] || e.tool)}</span></td>
+      <td>${esc(e.model) || '<span class="dim">-</span>'}</td>
+      <td class="dim">${esc(e.project) || '-'}</td>
       <td>${fmtShort(e.input_tokens)}</td>
       <td class="dim">${fmtShort(e.cached_input)}</td>
       <td>${fmtShort(e.output_tokens)}</td>

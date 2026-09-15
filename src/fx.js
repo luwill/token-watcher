@@ -1,6 +1,6 @@
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, isOffline } from './config.js';
 
 /**
  * USD→CNY 实时汇率：
@@ -56,6 +56,12 @@ export async function ensureFxRate(overrides = {}) {
     return { ...cached, rate: manual, source: 'manual' };
   }
   if (loading) return loading;
+  // 离线：只认磁盘缓存，缓存没有就用兜底值，绝不发请求
+  if (isOffline()) {
+    const disk = await readCache();
+    if (disk && disk.ts > cached.ts) cached = { ...disk, source: 'cache' };
+    return cached;
+  }
   const stale = Date.now() - cached.ts > TTL_MS;
   const empty = cached.source === 'default';
   if (!empty && !stale && Date.now() - lastFetch < 60_000) return cached;

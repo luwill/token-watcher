@@ -1,0 +1,55 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # 回归测试跑在离线模式下（TOKENMETER_OFFLINE=1），不依赖汇率 / LiteLLM 牌价等公网接口
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        node: ['22.13', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # 只装 echarts（前端 UMD 用），零其他依赖
+      - run: npm ci --omit=dev || npm install --no-audit --no-fund
+      - run: npm test
+
+  # 模块级错误（缺失导出、只读属性赋值）过不了 import，但 node --check 抓不到：
+  # 线上 12 次启动崩溃全属此类，必须单独冒烟
+  import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-audit --no-fund
+      - name: import 所有后端模块
+        run: |
+          node --input-type=module -e "
+            import { globSync } from 'node:fs';
+            import { pathToFileURL } from 'node:url';
+            for (const f of globSync('src/**/*.js')) {
+              await import(pathToFileURL(f).href);
+              console.log('ok', f);
+            }
+          "
+      - name: import 所有前端纯函数模块
+        run: |
+          node --input-type=module -e "
+            import { globSync } from 'node:fs';
+            import { pathToFileURL } from 'node:url';
+            for (const f of globSync('web/lib/*.js')) {
+              await import(pathToFileURL(f).href);
+              console.log('ok', f);
+            }
+          "

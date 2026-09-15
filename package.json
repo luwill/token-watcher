@@ -1,26 +1,58 @@
 {
   "name": "token-watcher",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build)",
+  "keywords": [
+    "token",
+    "usage",
+    "dashboard",
+    "quota",
+    "cost",
+    "llm",
+    "ai-agent",
+    "claude-code",
+    "codex",
+    "observability",
+    "cli",
+    "macos"
+  ],
+  "homepage": "https://github.com/luwill/token-watcher#readme",
+  "bugs": {
+    "url": "https://github.com/luwill/token-watcher/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luwill/token-watcher.git"
+  },
+  "license": "MIT",
+  "author": "louwill",
   "type": "module",
   "bin": {
     "tokenmeter": "bin/tokenmeter.js"
   },
   "main": "src/server.js",
   "scripts": {
-    "scan": "node --no-warnings bin/tokenmeter.js scan",
-    "serve": "node --no-warnings bin/tokenmeter.js serve",
-    "today": "node --no-warnings bin/tokenmeter.js today",
+    "scan": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js scan",
+    "serve": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js serve",
+    "today": "node --disable-warning=ExperimentalWarning bin/tokenmeter.js today",
     "bar": "open bin/token-watcher.app",
     "build-bar": "swiftc -O -o bin/token-watcher-bin menubar/main.swift && mkdir -p bin/token-watcher.app/Contents/MacOS && cp bin/token-watcher-bin bin/token-watcher.app/Contents/MacOS/token-watcher && cp menubar/Info.plist bin/token-watcher.app/Contents/",
     "install-agent": "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
     "uninstall-agent": "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
-    "test": "node --no-warnings test/run.mjs"
+    "test": "node --disable-warning=ExperimentalWarning test/run.mjs"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "dependencies": {
     "echarts": "^5.5.0"
-  }
+  },
+  "files": [
+    "bin/tokenmeter.js",
+    "src/",
+    "web/",
+    "README.md",
+    "LICENSE",
+    "docs/ARCHITECTURE.md"
+  ]
 }

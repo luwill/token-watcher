@@ -69,6 +69,14 @@ export const SOURCES = [
   },
 ];
 
+/**
+ * 离线模式（TOKENMETER_OFFLINE=1）：完全不发外网请求。
+ * 服务平时会访问三类外部端点——汇率接口、LiteLLM 牌价表、厂商余额接口（带 API key），
+ * 离线时全部跳过，改用本地缓存 / pricing.json 的手动汇率 / 种子价继续出数。
+ * 运行期读取，便于测试与用户临时切换。
+ */
+export const isOffline = () => process.env.TOKENMETER_OFFLINE === '1';
+
 export const DATA_DIR = join(HOME, '.tokenmeter');
 export const DB_PATH = join(DATA_DIR, 'tokenmeter.db');
 export const DEFAULT_PORT = 8787;
