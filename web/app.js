@@ -16,6 +16,10 @@ for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'c
   const el = document.getElementById(id);
   if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
 }
+// 成对行布局会拉伸图表容器，ECharts 需显式 resize 才重排
+for (const c of Object.values(charts)) {
+  new ResizeObserver(() => c.resize()).observe(c.getDom());
+}
 window.addEventListener('resize', () => {
   Object.values(charts).forEach(c => c.resize());
   // 布局稳定后重算格子尺寸（视口动画期间 clientWidth 会有中间态）
