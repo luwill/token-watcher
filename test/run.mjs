@@ -861,6 +861,52 @@ console.log('\n[8] 余额对账的归属');
   st.db.close();
 }
 
+/* ---------- 第 9 层：LaunchAgent 生成 ----------
+ * 全局安装的用户没有仓库，npm scripts 也调不到，此前没有可用的常驻方案。
+ * 这里只验"生成"，绝不调用 launchctl——否则跑一次测试就在开发机上装出一个真服务。
+ */
+console.log('\n[9] LaunchAgent 生成');
+{
+  const { buildPlist, entryScript, AGENT_LABEL } = await import(pathToFileURL(join(ROOT, 'src/agent.js')).href);
+
+  const plist = buildPlist({ node: '/usr/local/bin/node', script: '/opt/pkg/bin/tokenwatcher.js', port: 9001, logDir: '/tmp/l' });
+  // launchd 的 PATH 是系统默认，不含 npm 全局 bin 也不含 homebrew；脚本 shebang 又是
+  // #!/usr/bin/env node。所以 node 与脚本都必须是生成时就固化的绝对路径。
+  ok('plist 固化 node 绝对路径', plist.includes('<string>/usr/local/bin/node</string>'));
+  ok('plist 固化入口脚本绝对路径', plist.includes('<string>/opt/pkg/bin/tokenwatcher.js</string>'));
+  ok('plist 带上端口', plist.includes('<string>--port</string>') && plist.includes('<string>9001</string>'));
+  ok('plist 含 serve 与 KeepAlive', plist.includes('<string>serve</string>') && plist.includes('<key>KeepAlive</key>'));
+  ok('plist 标签与文件名一致', plist.includes(`<string>${AGENT_LABEL}</string>`));
+
+  // 家目录含 & 的用户并不罕见（公司名、姓氏）。不转义会生成非法 XML，
+  // launchd 静默拒绝加载——又是一个"不报错只是不工作"的失败方式。
+  const nasty = buildPlist({ node: '/n/a&b/node', script: '/s/x<y>/t.js', port: 8787, logDir: '/l/&' });
+  ok('路径中的 XML 特殊字符被转义',
+    nasty.includes('/n/a&amp;b/node') && nasty.includes('/s/x&lt;y&gt;/t.js') && !/&(?!amp;|lt;|gt;|quot;|apos;)/.test(nasty),
+    nasty.match(/<string>[^<]*[&<][^<]*<\/string>/g)?.join(' | '));
+
+  if (process.platform === 'darwin') {
+    const f = join(HOME, 'probe.plist');
+    writeFileSync(f, nasty);
+    const lint = spawnSync('plutil', ['-lint', f], { encoding: 'utf8' });
+    ok('生成的 plist 能过系统 plutil 校验', lint.status === 0, lint.stdout + lint.stderr);
+  } else {
+    console.log('  – plutil 校验跳过（非 macOS）');
+  }
+
+  const entry = entryScript();
+  ok('入口脚本解析到真实存在的文件', existsSync(entry) && entry.endsWith('bin/tokenwatcher.js'), entry);
+
+  // 装卸服务与数据无关。若排在 new Store 之后，仅仅装个开机自启就会在用户机器上
+  // 建出数据库文件——这种副作用没人会想到要去测，只能靠顺序锁住。
+  const cliSrc = read(join(ROOT, 'bin/tokenwatcher.js'));
+  ok('装卸服务在创建 Store 之前分流',
+    cliSrc.indexOf("cmd === 'install-agent'") < cliSrc.indexOf('new Store(DB_PATH)'));
+  // README 曾指向 npm run install-agent，而全局安装的用户根本调不到 npm scripts
+  ok('README 用 CLI 子命令而非 npm script 指引常驻',
+    /token-watcher install-agent|tokenwatcher install-agent/.test(read(join(ROOT, 'README.md'))));
+}
+
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
 console.log(failed ? `\n✗ ${failed} 项失败` : '\n✓ 全部通过');
