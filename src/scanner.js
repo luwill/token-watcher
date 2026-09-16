@@ -9,6 +9,8 @@ import { collectZcodeDb } from './collectors/zcode.js';
 import { collectDshFile } from './collectors/dsh.js';
 import { collectWorkbuddyFile } from './collectors/workbuddy.js';
 import { collectGrokFile } from './collectors/grok.js';
+import { collectPiFile } from './collectors/pi.js';
+import { collectOpencodeDb } from './collectors/opencode.js';
 
 const COLLECTORS = {
   claude: async (store, args) => ({ ...(await collectClaudeFile(store, args)), state: { _v: args.version } }),
@@ -17,6 +19,8 @@ const COLLECTORS = {
   dsh: async (store, args) => ({ ...(await collectDshFile(store, args)), state: { _v: args.version } }), // 快照式，无跨次状态
   workbuddy: async (store, args) => ({ ...(await collectWorkbuddyFile(store, args)), state: { _v: args.version } }),
   grok: async (store, args) => ({ ...(await collectGrokFile(store, args)), state: { _v: args.version } }),
+  pi: collectPiFile,           // 自带 state：project 来自首行 session.cwd，须跨增量轮次保留
+  opencode: collectOpencodeDb, // 自带 state：message / part 两张表各一个 rowid 水位
 };
 
 async function* walkByExt(root, match) {

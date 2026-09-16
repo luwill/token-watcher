@@ -102,6 +102,8 @@ td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: t
 .badge.dsh { color: var(--dsh); background: rgba(78,168,222,.12); }
 .badge.workbuddy { color: #f78fb3; background: rgba(247,143,179,.12); }
 .badge.grok { color: #e6edf3; background: rgba(230,237,243,.12); }
+.badge.pi { color: #2dd4bf; background: rgba(45,212,191,.12); }
+.badge.opencode { color: #ff8c42; background: rgba(255,140,66,.12); }
 
 .rates-card { grid-column: span 2; min-width: 0; }
 .rates-table { width: 100%; font-size: 12px; }

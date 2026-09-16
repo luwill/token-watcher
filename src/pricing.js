@@ -49,7 +49,7 @@ function toCny(amount, currency, rate) {
 }
 
 /**
- * 全源费用折算（7 源）：
+ * 全源费用折算（9 源）：
  * 单价解析优先级 = 用户 pricing.json（可含人民币直价）> LiteLLM 实时牌价（USD×汇率）。
  * ccmr 为按量实付；claude-code/codex/zcode/grok-build 等订阅制工具为 "API 等值成本"（假设性），
  * 前端需分开标注。窗口：0=全部。

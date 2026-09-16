@@ -11,6 +11,19 @@ export const HOME = homedir();
  *       zst    —— 递归扫描 *.zst（原子快照，mtime 变化即整体重解析 + dedup）
  * version: 采集器逻辑版本；files.state_json._v 落后时会自动全量重扫补数据（dedup 幂等）。
  */
+/**
+ * OpenCode 的库位置随 XDG 规范走（实测自其可执行体内的字符串常量：
+ * XDG_DATA_HOME / XDG_CONFIG_HOME / LOCALAPPDATA / .local/share）：
+ *   Linux、macOS：$XDG_DATA_HOME 或 ~/.local/share
+ *   Windows：%LOCALAPPDATA%
+ * 几个候选全部登记，不存在的会被枚举阶段跳过；去重是因为 XDG_DATA_HOME 常被显式设成默认值，
+ * 重复的 root 会让同一个库在一轮里被扫两遍。
+ */
+function opencodeDbPaths() {
+  const bases = [process.env.XDG_DATA_HOME, join(HOME, '.local/share'), process.env.LOCALAPPDATA];
+  return [...new Set(bases.filter(Boolean).map(b => join(b, 'opencode', 'opencode.db')))];
+}
+
 export const SOURCES = [
   {
     tool: 'claude-code',
@@ -66,6 +79,22 @@ export const SOURCES = [
     roots: [join(HOME, '.WorkBuddy/projects')],
     kind: 'jsonl',
     collector: 'workbuddy',
+    version: 1,
+  },
+  {
+    tool: 'pi',
+    label: 'Pi',
+    roots: [join(HOME, '.pi/agent/sessions')],
+    kind: 'jsonl',
+    collector: 'pi',
+    version: 1,
+  },
+  {
+    tool: 'opencode',
+    label: 'OpenCode',
+    roots: opencodeDbPaths(),
+    kind: 'sqlite',
+    collector: 'opencode',
     version: 1,
   },
 ];
