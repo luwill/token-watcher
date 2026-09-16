@@ -339,10 +339,25 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
   ]);
 
   // ccmr：deepseek-flash → 别名归一为 deepseek-v4.1-flash
-  w(join(HOME, '.claude-gateway/projects/-work-projB/s-ccmr.jsonl'), [JSON.stringify({
-    timestamp: ISO(50000), type: 'assistant', requestId: 'r2', sessionId: 's-ccmr',
-    message: { id: 'm3', model: 'deepseek-flash', usage: { input_tokens: 1000, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0, output_tokens: 200 } },
-  })]);
+  // 第二条（m4）复刻网关的真实写法：不写 requestId，一次 API 响应按 content block
+  // 拆成多行，input/cached 每行重复，只有终结块带真实 output_tokens，先到的行是 0。
+  // 四行塌成同一个 dedup_key，若沿用"先到者胜"，输出会被永久钉死在 0。
+  const ccmrBlock = (out, stop) => JSON.stringify({
+    timestamp: ISO(48000), type: 'assistant', sessionId: 's-ccmr',
+    message: {
+      id: 'm4', model: 'deepseek-flash', stop_reason: stop,
+      usage: { input_tokens: 2000, cache_read_input_tokens: 8000, cache_creation_input_tokens: 0, output_tokens: out },
+    },
+  });
+  w(join(HOME, '.claude-gateway/projects/-work-projB/s-ccmr.jsonl'), [
+    JSON.stringify({
+      timestamp: ISO(50000), type: 'assistant', requestId: 'r2', sessionId: 's-ccmr',
+      message: { id: 'm3', model: 'deepseek-flash', usage: { input_tokens: 1000, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0, output_tokens: 200 } },
+    }),
+    ccmrBlock(0, null),        // thinking 块
+    ccmrBlock(0, null),        // text 块
+    ccmrBlock(500, 'end_turn'),// 终结块：唯一带真实输出的一行
+  ]);
 
   // Codex：session_meta + 新格式模型 + token_count 累计差分 + rate_limits
   w(join(HOME, '.codex/sessions/2026/09/14/rollout-2026-09-14T12-00-00-fixture.jsonl'), [
@@ -461,7 +476,12 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   const byTool = Object.fromEntries(q('SELECT tool, SUM(total_tokens) t, COUNT(*) n FROM events GROUP BY tool').map(r => [r.tool, r]));
   ok('claude-code 2 事件（dedup 生效）', byTool['claude-code']?.n === 2, JSON.stringify(byTool['claude-code']));
   ok('claude-code 总量 745', byTool['claude-code']?.t === 745);
-  ok('ccmr 10200', byTool.ccmr?.t === 10200);
+  ok('ccmr 20700（多 block 响应取到终结块的输出）', byTool.ccmr?.t === 20700, JSON.stringify(byTool.ccmr));
+  ok('ccmr 2 事件（4 行塌成 2 次调用）', byTool.ccmr?.n === 2, JSON.stringify(byTool.ccmr));
+  // 这条是本次回归的靶心：网关不写 requestId 时曾把输出记成 0
+  ok('ccmr 终结块输出 500 而非 0',
+    q("SELECT output_tokens o FROM events WHERE tool='ccmr' ORDER BY output_tokens DESC")[0]?.o === 500,
+    JSON.stringify(q("SELECT output_tokens o FROM events WHERE tool='ccmr'")));
   ok('codex 差分 280', byTool.codex?.t === 280, JSON.stringify(byTool.codex));
   ok('grok 2100（秒→毫秒换算）', byTool.grok?.t === 2100);
   ok('workbuddy 550', byTool.workbuddy?.t === 550);
@@ -473,16 +493,16 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('opencode 700（user 消息无 tokens 不入库）', byTool.opencode?.t === 700, JSON.stringify(byTool.opencode));
   ok('opencode 1 事件', byTool.opencode?.n === 1, JSON.stringify(byTool.opencode));
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok('全源合计 17145', total === 17145, String(total));
+  ok('全源合计 27645', total === 27645, String(total));
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
-  ok("deepseek-flash → deepseek-v4.1-flash", models['deepseek-v4.1-flash'] === 1 && !models['deepseek-flash']);
+  ok("deepseek-flash → deepseek-v4.1-flash", models['deepseek-v4.1-flash'] === 2 && !models['deepseek-flash']);
   ok('GLM-5.3-Flash → glm-5.3-flash（小写归一）', models['glm-5.3-flash'] === 1);
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok('事件总数 10（幂等）', n2 === 10, String(n2));
+  ok('事件总数 11（幂等）', n2 === 11, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -540,9 +560,9 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 17145 && Array.isArray(s.by_day) && s.by_day.length >= 1
+      res.status === 200 && s.totals?.all_time_tokens === 27645 && Array.isArray(s.by_day) && s.by_day.length >= 1
       && Array.isArray(s.health) && s.health.length === 9 && s.costs && Array.isArray(s.costs.by_day)
-      && Array.isArray(s.recent) && s.recent.length === 10,
+      && Array.isArray(s.recent) && s.recent.length === 11,
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
     // 健康表必须随注册表一起长——曾经它是一份硬编码工具清单，加源必漏
     ok('健康表覆盖全部注册源', s.health.length === SOURCES.length, `${s.health.length} vs ${SOURCES.length}`);

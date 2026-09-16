@@ -39,7 +39,9 @@ export const SOURCES = [
     roots: [join(HOME, '.claude-gateway/projects')],
     kind: 'jsonl',
     collector: 'claude',
-    version: 2,
+    // v3: 网关不写 requestId，一次响应的多个 content block 塌成同一 dedup_key，
+    // 输出曾被钉死在首个分片的 0；修复后需全量重扫补正存量行
+    version: 3,
   },
   {
     tool: 'codex',
