@@ -24,57 +24,99 @@
 
 ## 快速开始
 
-```bash
-# 方式一：npx 直接运行（推荐，无需克隆仓库）
-npx token-watcher serve
-open http://127.0.0.1:8787
+三种用法，按"要不要长期用"来选。
 
-# 方式二：全局安装（长期使用）
+### 方式一：npx 试用（什么都不装）
+
+```bash
+npx --yes token-watcher@latest serve
+open http://127.0.0.1:8787
+```
+
+关掉终端即停止，适合先看看有没有用。
+
+两个参数都别省：`--yes` 跳过安装确认；`@latest` 绕开 npx 的版本缓存——不加的话它
+可能跑到一个早先缓存的旧版本。另外 npx 会优先解析**本地**依赖，所以如果你正好在
+本仓库目录里执行，跑的其实是仓库代码而非 npm 上的包。
+
+### 方式二：npm 全局安装（长期使用，推荐）
+
+```bash
 npm install -g token-watcher
 token-watcher serve
+```
 
-# 方式三：克隆仓库开发（首扫历史 ~3.3GB 约 6 秒，仅首次）
+装完除了 `serve`，还多出两个只有全局安装才方便用的能力：
+
+```bash
+# 常驻 + 开机自启（macOS，崩溃自动拉起）
+token-watcher install-agent
+token-watcher install-agent --port 9000
+token-watcher uninstall-agent
+
+# 菜单栏胶囊（macOS）
+token-watcher bar
+token-watcher bar --port 9000   # 服务不在默认端口时
+```
+
+`install-agent` 会把 node 与入口脚本的**绝对路径**固化进 LaunchAgent——launchd 的
+PATH 是系统默认，既不含 npm 全局 bin（前缀还可能被改过），也不保证含 homebrew，
+靠命令名会起不来。日志在 `~/.tokenmeter/logs/`。停用请用 `uninstall-agent` 或
+`launchctl bootout`，`launchctl stop` 会被 KeepAlive 立刻拉起。
+
+菜单栏 app 以 universal 二进制随包发布（arm64 + x86_64，约 340KB），不需要 Xcode
+工具链；从菜单里选「退出」可关闭。
+
+三个命令名等价：`token-watcher` / `tokenwatcher` / `tokenmeter`（后者是旧名别名）。
+
+### 方式三：克隆仓库（想改代码）
+
+```bash
 git clone https://github.com/luwill/token-watcher.git
 cd token-watcher && npm install
-npm run serve
+npm run serve        # 首扫历史 ~3.3GB 约 6 秒，仅首次
 ```
-
-想让它常驻并开机自启（macOS）：
 
 ```bash
-token-watcher install-agent           # 生成 LaunchAgent 并启动，崩溃自动拉起
-token-watcher install-agent --port 9000
-token-watcher uninstall-agent         # 停止并移除
+npm test             # 回归测试，零依赖、离线可跑
+npm run build-bar    # 重新编译菜单栏 app（需 Xcode CLT；发版时 prepack 会自动跑）
 ```
 
-它会把 node 与入口脚本的**绝对路径**固化进 plist——launchd 的 PATH 是系统默认，
-既不含 npm 全局 bin（前缀还可能被改过），也不保证含 homebrew，靠命令名会起不来。
-日志在 `~/.tokenmeter/logs/`。
+仓库里不含编译产物，`.app` 由 `prepack` 在发版前构建。所以克隆后想用菜单栏胶囊，
+需先执行 `npm run build-bar`。
 
-菜单栏胶囊（macOS）：
+### 三种方式的差别
+
+| | npx | 全局安装 | 克隆仓库 |
+|---|---|---|---|
+| 面板 / 采集 | ✓ | ✓ | ✓ |
+| 菜单栏胶囊 | ✓ | ✓ | 需先 `npm run build-bar` |
+| 开机自启 | 不建议 | ✓ | ✓（指向仓库路径）|
+| 升级 | 每次拉最新 | `npm i -g token-watcher` | `git pull` |
+
+npx 下不建议装开机自启：生成的 LaunchAgent 会指向 npx 的缓存目录，而那个目录随时
+可能被 npm 清理，届时服务会静默起不来。要常驻就用全局安装。
+
+### 其他命令
 
 ```bash
-token-watcher bar              # 常驻菜单栏，显示今日消耗与配额
-token-watcher bar --port 9000  # 服务不在默认端口时
+token-watcher today              # 终端速览今日消耗
+token-watcher scan               # 只扫描一次
+token-watcher serve --port 9000
 ```
 
-app 以 universal 二进制随包发布（arm64 + x86_64，约 340KB），无需安装 Xcode 工具链。
-从菜单里选「退出」可关闭。
+## 运行要求
 
-要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。dsh 源需要解 zstd：Node ≥ 23.8 用内置实现，更早的版本回落到系统 `zstd`（`brew install zstd`），两者都没有时自动跳过该源。
+**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。
 
-平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）。Windows / Linux 上核心链路（采集、面板、API）随 CI 在 macOS + Ubuntu + Windows 三平台跑回归，包含"装成依赖后能否真正跑起来"的安装冒烟。菜单栏 App 与 launchd 开机自启为 macOS 专属；dsh 源在 Node ≥ 23.8 上用内置 zstd，更早版本需系统 `zstd`（Windows 上一般没有，会自动跳过）。
+**dsh 源需要系统 `zstd`**（`brew install zstd`）。dsh 的会话快照是追加式多帧写入，
+单个文件可达数千帧，而 Node 内置的 zstd 只解第一帧就结束且不报错，因此这里以外部
+`zstd` 为准，仅在确认文件只含单帧时才回落内置实现。未安装且遇到多帧文件时，该源会在
+健康自检里报错，而不是静默少算。其余数据源不需要它。
+
+**平台支持：macOS 全功能验证**（含菜单栏 App 与 launchd）。Windows / Linux 上核心链路（采集、面板、API）随 CI 在 macOS + Ubuntu + Windows 三平台跑回归，包含"装成依赖后能否真正跑起来"的安装冒烟。菜单栏 App 与 launchd 开机自启为 macOS 专属。
 
 开发与测试：`npm test` 运行五层回归——语法检查、import 冒烟（拦模块级错误，`node --check` 看不见）、静态断言、前端纯函数行为、端到端冒烟（fixtures 黄金数字 + 幂等 + API 结构）。零依赖、离线运行，GitHub Actions 上跑 macOS/Ubuntu × Node 22.13/24 矩阵。
-
-其他命令：
-
-```bash
-tokenwatcher today       # 终端速览今日消耗
-tokenwatcher scan        # 只扫描一次
-tokenwatcher serve --port 9000
-npm run build-bar      # 仓库内重新编译菜单栏 app（需 Xcode CLT；发版时 prepack 会自动跑）
-```
 
 ## 功能
 
