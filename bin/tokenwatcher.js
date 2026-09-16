@@ -6,6 +6,8 @@
  *   tokenwatcher scan          全量/增量扫描一次并退出
  *   tokenwatcher serve [--port 8787]   扫描 + 常驻服务 + 实时监听（默认命令）
  *   tokenwatcher today         打印今日与累计用量摘要
+ *   tokenwatcher install-agent [--port 8787]   装成 macOS 开机自启服务
+ *   tokenwatcher uninstall-agent               停止并移除该服务
  *
  * tokenmeter 为旧命令名，仍作为别名保留（1.2 及更早版本装的是这个名字）。
  */
@@ -37,11 +39,14 @@ function installDaemonGuards() {
   process.on('uncaughtException', (err) => log(`uncaught exception: ${err?.stack ?? err}`));
 }
 
+const COMMANDS = ['scan', 'serve', 'today', 'install-agent', 'uninstall-agent'];
+
 function parseArgs(argv) {
-  const args = { cmd: 'serve', port: DEFAULT_PORT };
+  const args = { cmd: 'serve', port: DEFAULT_PORT, force: false };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === 'scan' || argv[i] === 'serve' || argv[i] === 'today') args.cmd = argv[i];
+    if (COMMANDS.includes(argv[i])) args.cmd = argv[i];
     if (argv[i] === '--port' || argv[i] === '-p') args.port = Number(argv[i + 1]) || DEFAULT_PORT;
+    if (argv[i] === '--force') args.force = true;
   }
   return args;
 }
@@ -53,7 +58,22 @@ const fmt = (n) => {
   return String(n ?? 0);
 };
 
-const { cmd, port } = parseArgs(process.argv.slice(2));
+const { cmd, port, force } = parseArgs(process.argv.slice(2));
+
+// 装卸服务与数据无关，必须在 new Store 之前返回：否则仅仅为了装个开机自启
+// 就会在用户机器上建出数据库文件。
+if (cmd === 'install-agent' || cmd === 'uninstall-agent') {
+  const { installAgent, uninstallAgent } = await import('../src/agent.js');
+  try {
+    if (cmd === 'install-agent') installAgent({ port, force, log });
+    else uninstallAgent({ log });
+  } catch (err) {
+    log(err.message);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 const store = new Store(DB_PATH);
 
 if (cmd === 'scan') {

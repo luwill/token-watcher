@@ -29,11 +29,27 @@
 npx token-watcher serve
 open http://127.0.0.1:8787
 
-# 方式二：克隆仓库开发（首扫历史 ~3.3GB 约 6 秒，仅首次）
+# 方式二：全局安装（长期使用）
+npm install -g token-watcher
+token-watcher serve
+
+# 方式三：克隆仓库开发（首扫历史 ~3.3GB 约 6 秒，仅首次）
 git clone https://github.com/luwill/token-watcher.git
 cd token-watcher && npm install
 npm run serve
 ```
+
+想让它常驻并开机自启（macOS）：
+
+```bash
+token-watcher install-agent           # 生成 LaunchAgent 并启动，崩溃自动拉起
+token-watcher install-agent --port 9000
+token-watcher uninstall-agent         # 停止并移除
+```
+
+它会把 node 与入口脚本的**绝对路径**固化进 plist——launchd 的 PATH 是系统默认，
+既不含 npm 全局 bin（前缀还可能被改过），也不保证含 homebrew，靠命令名会起不来。
+日志在 `~/.tokenmeter/logs/`。
 
 要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。dsh 源需要解 zstd：Node ≥ 23.8 用内置实现，更早的版本回落到系统 `zstd`（`brew install zstd`），两者都没有时自动跳过该源。
 
@@ -47,7 +63,6 @@ npm run serve
 tokenwatcher today       # 终端速览今日消耗
 tokenwatcher scan        # 只扫描一次
 tokenwatcher serve --port 9000
-npm run install-agent  # launchd 开机自启（KeepAlive 崩溃自拉起）
 npm run bar            # macOS 菜单栏胶囊（需 npm run build-bar 编译）
 ```
 
@@ -102,7 +117,17 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 
 ## 更新日志
 
-### 1.4.1（2026-09-16，待发布）
+### 1.4.2（2026-09-16，待发布）
+
+- 新增 `token-watcher install-agent` / `uninstall-agent`，把服务装成 macOS 开机自启项。
+  此前 README 指向 `npm run install-agent`，但 npm scripts 对全局安装的用户不可见，
+  且那条命令只负责 `launchctl bootstrap`、从不生成 plist，plist 也不随包发布——
+  全局安装的用户实际没有可用的常驻方案
+- 生成的 plist 固化 node 与入口脚本的绝对路径。launchd 的 PATH 不含 npm 全局 bin 与
+  homebrew，而入口脚本的 shebang 是 `#!/usr/bin/env node`，靠命令名无法启动
+- 检测到旧 `com.tokenmeter.server` 仍在运行时拒绝安装（两者抢同一端口），可用 `--force` 覆盖
+
+### 1.4.1（2026-09-16）
 
 修掉一批让面板数字低于厂商账单的问题。起因是实测发现面板显示 DeepSeek 当日 ¥8.34，
 而官方后台是 ¥58.24。定价表本身无误，问题全在数据进库之前。
