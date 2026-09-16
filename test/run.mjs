@@ -456,19 +456,29 @@ let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随�
       data: { header: { config: { model: 'Dsh-Header-Model' } } } }),
     usageRec,
   ];
+  // dsh 是**追加式多帧**写入：每批记录压成一个独立 zstd 帧接在文件末尾，实测单个会话
+  // 文件里有数千帧。夹具必须照此生成——先前用单帧夹具，于是"只解第一帧"的实现一路绿灯，
+  // 真实数据上却整源归零。夹具不像真实数据，测试就只是在测自己。
   const zstd = (dir, name, lines) => {
     mkdirSync(dir, { recursive: true });
-    const body = lines.join('\n') + '\n';
     const zlib = require('node:zlib');
     if (typeof zlib.zstdCompressSync === 'function') {   // Node ≥ 23.8 自带
-      writeFileSync(join(dir, name), zlib.zstdCompressSync(Buffer.from(body)));
+      const frames = lines.map((l) => zlib.zstdCompressSync(Buffer.from(l + '\n')));
+      writeFileSync(join(dir, name), Buffer.concat(frames));
       return true;
     }
-    const plain = join(dir, name.replace(/\.zstd$/, ''));
-    writeFileSync(plain, body);
-    const r = spawnSync('zstd', ['-q', '-f', plain, '-o', join(dir, name)], { encoding: 'utf8' });
-    rmSync(plain, { force: true });
-    return r.status === 0;
+    // 旧版 Node：逐行压成独立帧再拼接，等价于上面的多帧布局
+    const parts = lines.map((l, i) => {
+      const plain = join(dir, `.part${i}`);
+      writeFileSync(plain, l + '\n');
+      const r = spawnSync('zstd', ['-q', '-f', plain, '-o', `${plain}.zst`], { encoding: 'utf8' });
+      rmSync(plain, { force: true });
+      return r.status === 0 ? readFileSync(`${plain}.zst`) : null;
+    });
+    if (parts.some((x) => !x)) return false;
+    writeFileSync(join(dir, name), Buffer.concat(parts));
+    for (let i = 0; i < lines.length; i++) rmSync(join(dir, `.part${i}.zst`), { force: true });
+    return true;
   };
   // v3：usage 直接挂在 data 下，模型来自 data.message.source.model（覆盖 request/header）
   hasDsh = zstd(join(HOME, '.dsh/sessions/--work-projI--/s-dsh-v3'), 'session.v3.jsonl.zstd',
