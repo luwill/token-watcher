@@ -907,6 +907,56 @@ console.log('\n[9] LaunchAgent 生成');
     /token-watcher install-agent|tokenwatcher install-agent/.test(read(join(ROOT, 'README.md'))));
 }
 
+/* ---------- 第 10 层：菜单栏胶囊的分发 ----------
+ * 此前 .app 只存在于仓库、且不在 files 白名单里，`npm i -g` 的用户拿不到，
+ * 而 README 指的 `npm run bar` 对全局安装同样不可见。这类"声明了但没发出去"
+ * 的缺陷装包前看不出来，只能在 npm pack 的实际产物上验。
+ */
+console.log('\n[10] 菜单栏胶囊的分发');
+{
+  const { barAppPath } = await import(pathToFileURL(join(ROOT, 'src/bar.js')).href);
+  ok('app 路径解析在包内', barAppPath().endsWith(join('bin', 'token-watcher.app')), barAppPath());
+
+  // 发布白名单必须声明它。产物本身不入 git（由 prepack 在发版前编译），
+  // 所以干净克隆与 Linux CI 上盘里没有 .app，那种情况下只能验声明。
+  const pkg = JSON.parse(read(join(ROOT, 'package.json')));
+  ok('files 白名单声明了菜单栏 app', (pkg.files || []).includes('bin/token-watcher.app/'),
+    JSON.stringify(pkg.files));
+  ok('prepack 会在发版前编译，避免发出陈旧或缺失的产物',
+    /build.sh/.test(pkg.scripts?.prepack || ''), pkg.scripts?.prepack);
+
+  const exe = join(barAppPath(), 'Contents', 'MacOS', 'token-watcher');
+  if (existsSync(exe)) {
+    // 光声明不够：曾经 files 里写了却因为路径写法不对而没进包
+    const packed = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'],
+      { cwd: ROOT, encoding: 'utf8' });
+    let files = [];
+    try { files = JSON.parse(packed.stdout)[0].files.map((f) => f.path); } catch { /* 断言会报错 */ }
+    ok('声明的 app 确实进了发布产物',
+      files.some((f) => f.endsWith('token-watcher.app/Contents/MacOS/token-watcher'))
+      && files.some((f) => f.endsWith('token-watcher.app/Contents/Info.plist')),
+      files.filter((f) => f.includes('.app')).join(',') || packed.stderr?.slice(0, 120));
+  } else {
+    console.log('  – 打包内容检查跳过（本地尚未编译 app，执行 npm run build-bar 后可验）');
+  }
+
+  // Intel Mac 上单 arm64 产物直接无法运行，且失败时没有任何提示
+  if (process.platform === 'darwin' && existsSync(exe)) {
+    const archs = spawnSync('lipo', ['-archs', exe], { encoding: 'utf8' }).stdout || '';
+    ok('二进制为 universal（含 arm64 与 x86_64）',
+      archs.includes('arm64') && archs.includes('x86_64'), archs.trim());
+  } else {
+    console.log('  – 架构检查跳过（非 macOS 或尚未编译）');
+  }
+
+  const cliSrc = read(join(ROOT, 'bin/tokenwatcher.js'));
+  ok('bar 在创建 Store 之前分流', cliSrc.indexOf("cmd === 'bar'") < cliSrc.indexOf('new Store(DB_PATH)'));
+  // 写死端口会让 serve --port 的用户拿到一个连不上的胶囊
+  ok('菜单栏源码不再写死端口', !/127\.0\.0\.1:8787/.test(read(join(ROOT, 'menubar/main.swift'))));
+  ok('README 用 CLI 子命令指引菜单栏',
+    /token-watcher bar|tokenwatcher bar/.test(read(join(ROOT, 'README.md'))));
+}
+
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
 console.log(failed ? `\n✗ ${failed} 项失败` : '\n✓ 全部通过');

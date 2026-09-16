@@ -38,10 +38,11 @@
     "serve": "node --disable-warning=ExperimentalWarning bin/tokenwatcher.js serve",
     "today": "node --disable-warning=ExperimentalWarning bin/tokenwatcher.js today",
     "bar": "open bin/token-watcher.app",
-    "build-bar": "swiftc -O -o bin/token-watcher-bin menubar/main.swift && mkdir -p bin/token-watcher.app/Contents/MacOS && cp bin/token-watcher-bin bin/token-watcher.app/Contents/MacOS/token-watcher && cp menubar/Info.plist bin/token-watcher.app/Contents/",
+    "build-bar": "bash menubar/build.sh",
     "install-agent": "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
     "uninstall-agent": "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.tokenmeter.server.plist",
-    "test": "node --disable-warning=ExperimentalWarning test/run.mjs"
+    "test": "node --disable-warning=ExperimentalWarning test/run.mjs",
+    "prepack": "bash menubar/build.sh"
   },
   "engines": {
     "node": ">=22.13"
@@ -51,6 +52,7 @@
   },
   "files": [
     "bin/tokenwatcher.js",
+    "bin/token-watcher.app/",
     "src/",
     "web/",
     "README.md",

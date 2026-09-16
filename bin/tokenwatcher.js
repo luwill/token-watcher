@@ -8,6 +8,7 @@
  *   tokenwatcher today         打印今日与累计用量摘要
  *   tokenwatcher install-agent [--port 8787]   装成 macOS 开机自启服务
  *   tokenwatcher uninstall-agent               停止并移除该服务
+ *   tokenwatcher bar [--port 8787]             启动 macOS 菜单栏胶囊
  *
  * tokenmeter 为旧命令名，仍作为别名保留（1.2 及更早版本装的是这个名字）。
  */
@@ -39,7 +40,7 @@ function installDaemonGuards() {
   process.on('uncaughtException', (err) => log(`uncaught exception: ${err?.stack ?? err}`));
 }
 
-const COMMANDS = ['scan', 'serve', 'today', 'install-agent', 'uninstall-agent'];
+const COMMANDS = ['scan', 'serve', 'today', 'install-agent', 'uninstall-agent', 'bar'];
 
 function parseArgs(argv) {
   const args = { cmd: 'serve', port: DEFAULT_PORT, force: false };
@@ -62,11 +63,16 @@ const { cmd, port, force } = parseArgs(process.argv.slice(2));
 
 // 装卸服务与数据无关，必须在 new Store 之前返回：否则仅仅为了装个开机自启
 // 就会在用户机器上建出数据库文件。
-if (cmd === 'install-agent' || cmd === 'uninstall-agent') {
-  const { installAgent, uninstallAgent } = await import('../src/agent.js');
+if (cmd === 'install-agent' || cmd === 'uninstall-agent' || cmd === 'bar') {
   try {
-    if (cmd === 'install-agent') installAgent({ port, force, log });
-    else uninstallAgent({ log });
+    if (cmd === 'bar') {
+      const { openBar } = await import('../src/bar.js');
+      openBar({ port, log });
+    } else {
+      const { installAgent, uninstallAgent } = await import('../src/agent.js');
+      if (cmd === 'install-agent') installAgent({ port, force, log });
+      else uninstallAgent({ log });
+    }
   } catch (err) {
     log(err.message);
     process.exit(1);

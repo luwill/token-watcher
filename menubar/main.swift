@@ -4,7 +4,15 @@ import AppKit
 import Foundation
 import UserNotifications
 
-let API = URL(string: "http://127.0.0.1:8787/api/summary?days=1")!
+// 端口来自 `token-watcher bar --port N`（经 open --args 传入）；直接双击启动时取默认值。
+// 写死端口会让 `serve --port 9000` 的用户拿到一个连不上的胶囊。
+let PORT: Int = {
+  let a = CommandLine.arguments
+  if let i = a.firstIndex(of: "--port"), i + 1 < a.count, let p = Int(a[i + 1]) { return p }
+  return 8787
+}()
+let BASE = "http://127.0.0.1:\(PORT)"
+let API = URL(string: "\(BASE)/api/summary?days=1")!
 
 struct Summary: Decodable {
   struct Totals: Decodable { var today_tokens: Int?; var all_time_tokens: Int? }
@@ -24,7 +32,7 @@ struct Summary: Decodable {
 
 func fmtTokens(_ n: Int) -> String {
   switch n {
-  case 1_000_000...: return String(format: "%.1f亿", Double(n) / 1e8)
+  case 100_000_000...: return String(format: "%.1f亿", Double(n) / 1e8)
   case 10_000...: return String(format: "%.0f万", Double(n) / 1e4)
   default: return "\(n)"
   }
@@ -130,7 +138,7 @@ final class BarApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDel
   }
 
   @objc func openDashboard() {
-    NSWorkspace.shared.open(URL(string: "http://127.0.0.1:8787/")!)
+    NSWorkspace.shared.open(URL(string: BASE + "/")!)
   }
 
   @objc func refreshNow() { refresh() }

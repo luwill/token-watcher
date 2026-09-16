@@ -51,6 +51,16 @@ token-watcher uninstall-agent         # 停止并移除
 既不含 npm 全局 bin（前缀还可能被改过），也不保证含 homebrew，靠命令名会起不来。
 日志在 `~/.tokenmeter/logs/`。
 
+菜单栏胶囊（macOS）：
+
+```bash
+token-watcher bar              # 常驻菜单栏，显示今日消耗与配额
+token-watcher bar --port 9000  # 服务不在默认端口时
+```
+
+app 以 universal 二进制随包发布（arm64 + x86_64，约 340KB），无需安装 Xcode 工具链。
+从菜单里选「退出」可关闭。
+
 要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。dsh 源需要解 zstd：Node ≥ 23.8 用内置实现，更早的版本回落到系统 `zstd`（`brew install zstd`），两者都没有时自动跳过该源。
 
 平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）。Windows / Linux 上核心链路（采集、面板、API）随 CI 在 macOS + Ubuntu + Windows 三平台跑回归，包含"装成依赖后能否真正跑起来"的安装冒烟。菜单栏 App 与 launchd 开机自启为 macOS 专属；dsh 源在 Node ≥ 23.8 上用内置 zstd，更早版本需系统 `zstd`（Windows 上一般没有，会自动跳过）。
@@ -63,7 +73,7 @@ token-watcher uninstall-agent         # 停止并移除
 tokenwatcher today       # 终端速览今日消耗
 tokenwatcher scan        # 只扫描一次
 tokenwatcher serve --port 9000
-npm run bar            # macOS 菜单栏胶囊（需 npm run build-bar 编译）
+npm run build-bar      # 仓库内重新编译菜单栏 app（需 Xcode CLT；发版时 prepack 会自动跑）
 ```
 
 ## 功能
@@ -126,6 +136,12 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 - 生成的 plist 固化 node 与入口脚本的绝对路径。launchd 的 PATH 不含 npm 全局 bin 与
   homebrew，而入口脚本的 shebang 是 `#!/usr/bin/env node`，靠命令名无法启动
 - 检测到旧 `com.tokenmeter.server` 仍在运行时拒绝安装（两者抢同一端口），可用 `--force` 覆盖
+- 新增 `token-watcher bar`，菜单栏胶囊随包发布。此前 `.app` 只存在于仓库、也不在
+  发布白名单里，全局安装的用户拿不到，而指引用的 `npm run bar` 同样不可见
+- 菜单栏 app 改为 universal 二进制（arm64 + x86_64）。此前产物只有 arm64，Intel Mac
+  上无法运行；`prepack` 会在发版前自动重新编译，避免发出陈旧或缺失的产物
+- 菜单栏 app 不再写死 8787 端口，`serve --port` 的用户不会再拿到连不上的胶囊
+- 修掉菜单栏的数量换算：「亿」档阈值错写成 1e6 却按 1e8 换算，200 万会显示成 "0.0亿"
 
 ### 1.4.1（2026-09-16）
 
