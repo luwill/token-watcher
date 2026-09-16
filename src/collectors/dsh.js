@@ -1,9 +1,15 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import zlib from 'node:zlib';
 import { normalizeModel } from '../models.js';
 
 const execFileP = promisify(execFile);
+
+// 回落用的候选路径：不能只靠 PATH。常驻服务由 launchd 拉起，其 PATH 是系统默认，
+// 不含 /opt/homebrew/bin，而 zstd 通常只装在那里。
+const ZSTD_BINS = ['zstd', '/opt/homebrew/bin/zstd', '/usr/local/bin/zstd', '/usr/bin/zstd'];
 
 /**
  * dsh（DeepSeek Harness）采集器：~/.dsh/sessions 下 zstd 压缩的会话快照。
@@ -18,16 +24,29 @@ const execFileP = promisify(execFile);
  *   total = input + cacheRead + cacheWrite + output（v3 自带 totalTokens，实测恒等）。
  * - 模型优先取记录自带的 data.message.source.model（v3 起每条都带），
  *   回落到顺序解析 request/header 维护的当前模型；cwd 来自 session 记录。
- * - 依赖系统 zstd（homebrew / macOS 常见），缺失时整源跳过。
+ * - 解压优先用 Node 内置 zstd，旧版 Node 回落到外部 zstd（含常见绝对路径），都没有则整源跳过。
+ */
+/**
+ * 优先用 Node 内置 zstd（Node ≥ 23.8），彻底不依赖外部可执行文件。
+ *
+ * 这不只是省事：常驻服务由 launchd 拉起，PATH 里没有 homebrew 目录，守护进程因此
+ * 长期报 "zstd not installed"、解不开任何 dsh 快照——只有人在交互 shell 里手跑 scan
+ * 才正常，面板于是一直停在旧数据。内置实现让两种场景行为一致。
+ * 旧版 Node 没有内置实现，回落到 CLI，并显式试几个常见绝对路径。
  */
 async function decompress(path) {
-  try {
-    const { stdout } = await execFileP('zstd', ['-dc', path], { maxBuffer: 256 * 1024 * 1024 });
-    return stdout;
-  } catch (err) {
-    if (err.code === 'ENOENT') throw new Error('zstd not installed');
-    throw err;
+  if (typeof zlib.zstdDecompressSync === 'function') {
+    return zlib.zstdDecompressSync(await readFile(path)).toString('utf8');
   }
+  for (const bin of ZSTD_BINS) {
+    try {
+      const { stdout } = await execFileP(bin, ['-dc', path], { maxBuffer: 256 * 1024 * 1024 });
+      return stdout;
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // 真正的解压失败要抛出去，不要被当成"没装"
+    }
+  }
+  throw new Error('zstd 不可用：当前 Node 无内置 zstd，且 PATH 与常见安装路径下均无 zstd');
 }
 
 export async function collectDshFile(store, { path, fileId }) {

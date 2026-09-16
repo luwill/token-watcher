@@ -19,6 +19,7 @@ import net from 'node:net';
 import http from 'node:http';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const require = (await import('node:module')).createRequire(import.meta.url);
 // 数据源注册表是多层断言的共同基准（前端登记、健康表长度），顶层导入一次
 const { SOURCES } = await import(pathToFileURL(join(ROOT, 'src/config.js')).href);
 let failed = 0;
@@ -457,8 +458,14 @@ let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随�
   ];
   const zstd = (dir, name, lines) => {
     mkdirSync(dir, { recursive: true });
+    const body = lines.join('\n') + '\n';
+    const zlib = require('node:zlib');
+    if (typeof zlib.zstdCompressSync === 'function') {   // Node ≥ 23.8 自带
+      writeFileSync(join(dir, name), zlib.zstdCompressSync(Buffer.from(body)));
+      return true;
+    }
     const plain = join(dir, name.replace(/\.zstd$/, ''));
-    writeFileSync(plain, lines.join('\n') + '\n');
+    writeFileSync(plain, body);
     const r = spawnSync('zstd', ['-q', '-f', plain, '-o', join(dir, name)], { encoding: 'utf8' });
     rmSync(plain, { force: true });
     return r.status === 0;
@@ -785,6 +792,34 @@ console.log('\n[6] DeepSeek 峰谷价');
       JSON.stringify(m));
   }
   child.kill();
+}
+
+/* ---------- 第 7 层：无 zstd CLI 时仍能解 dsh ----------
+ * 常驻服务由 launchd 拉起，其 PATH 是系统默认，不含 /opt/homebrew/bin，而 zstd 通常
+ * 只装在那里。于是守护进程解不开 dsh 快照（报 "zstd not installed"），只有人在交互
+ * shell 里手跑 scan 才正常——面板因此长期停在旧数据。清空 PATH 精确复现该环境。
+ */
+console.log('\n[7] 无 zstd CLI 时仍能解 dsh');
+{
+  const zlib = require('node:zlib');
+  if (!hasDsh || typeof zlib.zstdDecompressSync !== 'function') {
+    console.log('  – 跳过（无 dsh fixture 或该 Node 无内置 zstd，只能靠外部 CLI）');
+  } else {
+    const { collectDshFile } = await import(pathToFileURL(join(ROOT, 'src/collectors/dsh.js')).href);
+    const events = [];
+    const stub = { insertEvent: (e) => { events.push(e); return 1; }, insertToolCall: () => 1 };
+    const fixture = join(HOME, '.dsh/sessions/--work-projI--/s-dsh-v3/session.v3.jsonl.zstd');
+    const savedPath = process.env.PATH;
+    process.env.PATH = '';   // launchd 环境：CLI 一律找不到
+    let err = null;
+    try {
+      await collectDshFile(stub, { path: fixture, fileId: 's-dsh-v3' });
+    } catch (e) { err = e; }
+    finally { process.env.PATH = savedPath; }
+    ok('PATH 里没有 zstd 也不抛错', !err, String(err?.message));
+    ok('PATH 里没有 zstd 也能解出用量', events.length === 1 && events[0].total_tokens === 1480,
+      JSON.stringify(events));
+  }
 }
 
 /* ---------- 清理 ---------- */
