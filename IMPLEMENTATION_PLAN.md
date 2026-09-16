@@ -44,10 +44,15 @@ dsh 升级会话格式，采集器只认旧结构，打开文件后一条也匹�
 | usage 路径 | `data.chunk.usage` | `data.usage` |
 | 字段名 | `inputTokens` 等 | 不变 |
 
-- [ ] 测试：v3 夹具（zstd CLI 压缩，缺失时守卫跳过），断言用量入库
-- [ ] 实现：解析 `assistant/message` + `data.usage`，补 `cacheWriteTokens`，
-      模型兼容 `data.message.source.model`
-- [ ] 旧格式并存：同目录下新旧文件共用父目录名作 fileId，`dedup_key` 命名空间会撞车，需隔离
+- [x] 测试：v3 + 旧格式各一份夹具（zstd CLI 压缩，缺失时守卫跳过）
+      （RED 实录：`dsh 1800 → {"t":320,"n":1}`，v3 文件颗粒无收，
+      旧格式两条断言通过，证明向后兼容当时是好的）
+- [x] 实现：解析 `assistant/message` + `data.usage`，补 `cacheWriteTokens`，
+      模型优先 `data.message.source.model`，回落 `request/header`
+- [x] dedup_key 隔离：v3 的键加文件名（`dsh:${fileId}:${file}:${seq}`），
+      旧结构的键保持原样，避免历史事件重扫时被当成新行再插一遍。
+      这点因阶段 1 的补登逻辑变得更要紧：撞键不再只是被丢弃，而会覆写旧行
+- [x] dsh 升 version 2 触发全量重扫，补回 8-14 以来的用量
 
 ## 阶段 3：峰谷价未实现
 

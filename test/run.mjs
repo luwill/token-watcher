@@ -321,6 +321,7 @@ console.log('\n[2c] 后端健壮性');
 console.log('\n[3] 端到端冒烟（临时 HOME + fixtures）');
 const HOME = mkdtempSync(join(tmpdir(), 'tokenmeter-test-'));
 const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
+let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随之放行
 {
   // ---- fixtures（时间戳用"现在"附近，避免健康检查把过去时间的 fixture 判为 stale）----
   const NOW = Date.now();
@@ -444,6 +445,42 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
     o.close();
   }
 
+  // dsh：zstd 压缩的会话快照。v3 换了记录结构（assistant/chunk → assistant/message，
+  // data.chunk.usage → data.usage），旧采集器一条也匹配不上且不报错——2026-08-14
+  // 起整源静默归零。两种格式各造一份，确保新格式能解析且旧格式不被改坏。
+  // 需要系统 zstd；缺失时该源在生产里本就整源跳过，测试同样跳过。
+  const dshLines = (model, usageRec) => [
+    JSON.stringify({ type: 'session', seq: 1, time: NOW - 22000, cwd: `/work/${model}` }),
+    JSON.stringify({ type: 'request/header', seq: 2, time: NOW - 21500,
+      data: { header: { config: { model: 'Dsh-Header-Model' } } } }),
+    usageRec,
+  ];
+  const zstd = (dir, name, lines) => {
+    mkdirSync(dir, { recursive: true });
+    const plain = join(dir, name.replace(/\.zstd$/, ''));
+    writeFileSync(plain, lines.join('\n') + '\n');
+    const r = spawnSync('zstd', ['-q', '-f', plain, '-o', join(dir, name)], { encoding: 'utf8' });
+    rmSync(plain, { force: true });
+    return r.status === 0;
+  };
+  // v3：usage 直接挂在 data 下，模型来自 data.message.source.model（覆盖 request/header）
+  hasDsh = zstd(join(HOME, '.dsh/sessions/--work-projI--/s-dsh-v3'), 'session.v3.jsonl.zstd',
+    dshLines('projI', JSON.stringify({
+      type: 'assistant/message', seq: 3, time: NOW - 21000,
+      data: {
+        turn: 1, step: 1,
+        usage: { inputTokens: 400, outputTokens: 50, cacheReadTokens: 1000, cacheWriteTokens: 30, totalTokens: 1480 },
+        message: { role: 'assistant', source: { kind: 'model', model: 'Dsh-Test-Model' } },
+      },
+    })));
+  // 旧格式：与 v3 同目录也并存过，父目录名作 fileId 会让两者 dedup_key 撞车
+  if (hasDsh) zstd(join(HOME, '.dsh/sessions/--work-projJ--/s-dsh-old'), 'session.jsonl.zstd',
+    dshLines('projJ', JSON.stringify({
+      type: 'assistant/chunk', seq: 3, time: NOW - 20500,
+      data: { turn: 1, step: 1, chunk: { type: 'usage',
+        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 200, reasoningTokens: 5 } } },
+    })));
+
   // 本地定价（离线可算费用；deepseek/glm 覆盖 fixtures 模型）
   mkdirSync(join(HOME, '.tokenmeter'), { recursive: true });
   writeFileSync(join(HOME, '.tokenmeter', 'pricing.json'), JSON.stringify({
@@ -454,9 +491,14 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
       'gpt-test': { currency: 'CNY', input_miss: 10, input_hit: 2, output: 30 },
       'pi-test-model': { currency: 'CNY', input_miss: 3, input_hit: 0.6, output: 9 },
       'oc-test-model': { currency: 'CNY', input_miss: 5, input_hit: 1, output: 15 },
+      'dsh-test-model': { currency: 'CNY', input_miss: 2, input_hit: 0.4, output: 8 },
+      'dsh-header-model': { currency: 'CNY', input_miss: 2, input_hit: 0.4, output: 8 },
     },
   }));
 }
+
+// dsh 夹具是否落地，决定其黄金数字是否计入（无 zstd 时该源整体缺席）
+const DSH_T = hasDsh ? 1800 : 0, DSH_N = hasDsh ? 2 : 0;
 
 // 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控。
 // USERPROFILE 是 Windows 上 os.homedir() 认的变量，只设 HOME 在那边临时家目录不生效。
@@ -486,6 +528,21 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('grok 2100（秒→毫秒换算）', byTool.grok?.t === 2100);
   ok('workbuddy 550', byTool.workbuddy?.t === 550);
   ok('zcode 860', byTool.zcode?.t === 860);
+  // dsh v3：usage 挂在 data 下而非 data.chunk.usage；旧采集器在这里静默收零达一个月
+  if (hasDsh) {
+    ok('dsh 1800（v3 1480 + 旧格式 320）', byTool.dsh?.t === 1800, JSON.stringify(byTool.dsh));
+    ok('dsh 2 事件（新旧格式各一，dedup_key 不撞车）', byTool.dsh?.n === 2, JSON.stringify(byTool.dsh));
+    const v3 = q("SELECT * FROM events WHERE tool='dsh' AND total_tokens=1480")[0];
+    ok('dsh v3 缓存写入 30（旧实现硬编码 0）', v3?.cache_write === 30, JSON.stringify(v3));
+    ok('dsh v3 模型取 data.message.source.model', v3?.model === 'dsh-test-model', String(v3?.model));
+    ok('dsh v3 project=projI（session.cwd）', v3?.project === 'projI', String(v3?.project));
+    const old = q("SELECT * FROM events WHERE tool='dsh' AND total_tokens=320")[0];
+    ok('dsh 旧格式仍可解析（模型回落 request/header）', old?.model === 'dsh-header-model', String(old?.model));
+    ok('dsh 旧格式 reasoning 5 不重复计入 total', old?.reasoning_tokens === 5 && old?.total_tokens === 320,
+      JSON.stringify(old));
+  } else {
+    console.log('  – dsh 断言跳过（系统无 zstd，该源在生产里同样整体跳过）');
+  }
   // Pi/OpenCode 口径实测：total = 新输入 + 缓存读 + 缓存写 + 输出，reasoning 已含在 output 内。
   // 若误把 reasoning 再加一遍，pi 会变成 1550、opencode 会变成 705——这两个数就是防线。
   ok('pi 1710（input 不含缓存，reasoning 不重复计入）', byTool.pi?.t === 1710, JSON.stringify(byTool.pi));
@@ -493,7 +550,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('opencode 700（user 消息无 tokens 不入库）', byTool.opencode?.t === 700, JSON.stringify(byTool.opencode));
   ok('opencode 1 事件', byTool.opencode?.n === 1, JSON.stringify(byTool.opencode));
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok('全源合计 27645', total === 27645, String(total));
+  ok(`全源合计 ${27645 + DSH_T}`, total === 27645 + DSH_T, String(total));
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
@@ -502,7 +559,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok('事件总数 11（幂等）', n2 === 11, String(n2));
+  ok(`事件总数 ${11 + DSH_N}（幂等）`, n2 === 11 + DSH_N, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -560,14 +617,14 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 27645 && Array.isArray(s.by_day) && s.by_day.length >= 1
+      res.status === 200 && s.totals?.all_time_tokens === 27645 + DSH_T && Array.isArray(s.by_day) && s.by_day.length >= 1
       && Array.isArray(s.health) && s.health.length === 9 && s.costs && Array.isArray(s.costs.by_day)
-      && Array.isArray(s.recent) && s.recent.length === 11,
+      && Array.isArray(s.recent) && s.recent.length === 11 + DSH_N,
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
     // 健康表必须随注册表一起长——曾经它是一份硬编码工具清单，加源必漏
     ok('健康表覆盖全部注册源', s.health.length === SOURCES.length, `${s.health.length} vs ${SOURCES.length}`);
     const okTools = s.health.filter(h => h.status === 'ok').length;
-    ok('健康 9 源全 ok（dsh 无 fixture 应为 empty 而非 error）', okTools === 8, `${okTools} ok（dsh=empty）`);
+    ok(`健康 ${hasDsh ? 9 : 8} 源 ok`, okTools === (hasDsh ? 9 : 8), `${okTools} ok`);
     ok('费用 by_day 有值（本地定价离线可算）', s.costs.by_day.length >= 1 && s.costs.today_cny >= 0);
 
     // 离线模式：不发任何外网请求，用本地缓存/手动汇率/种子价继续出数
