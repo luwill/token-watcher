@@ -76,8 +76,11 @@ export const SOURCES = [
     kind: 'zst',
     collector: 'dsh',
     // v2: 认 v3 会话结构（assistant/message + data.usage）。2026-08-14 dsh 切格式后
-    // 本源静默归零一个月，升版触发全量重扫补回这段时间的用量
-    version: 2,
+    //     本源静默归零一个月，升版触发全量重扫补回这段时间的用量
+    // v3: 1.4.1 的内置 zstd 只解首帧，解析不出内容却照常推进游标，把"已处理"的
+    //     假象写进了库。仅修解压不会回头重读——从 1.4.1 升级上来的用户游标都被
+    //     污染了，必须靠升版强制全量重扫才能补回。
+    version: 3,
     apiBilled: true, // 与 ccmr 花的是同一个 DeepSeek 账户
   },
   {
