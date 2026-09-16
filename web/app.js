@@ -181,7 +181,7 @@ function renderStatus(quota, balances, rates, recon, costs) {
     </tr>`).join('');
     html += `<div class="quota-card rates-card">
       <div class="quota-head"><span class="q-title">WorkBuddy 积分费率（自学习）</span>
-        <span class="q-reset">积分/M token</span></div>
+        <span class="q-reset">积分/百万 token</span></div>
       <table class="rates-table"><thead><tr><th>模型</th><th>输入</th><th>缓存</th><th>输出</th><th>样本</th></tr></thead>
       <tbody>${rows}</tbody></table>
     </div>`;
