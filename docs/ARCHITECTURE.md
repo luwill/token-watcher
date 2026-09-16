@@ -5,7 +5,7 @@
 ## 总体架构
 
 ```
-bin/tokenmeter.js        CLI（scan / serve / today）+ 一次性目录迁移
+bin/tokenwatcher.js      CLI（scan / serve / today）+ 一次性目录迁移
 src/
   config.js              数据源注册表（kind + collector + version）
   store.js               SQLite（node:sqlite）：events / files游标 / quota / rates / tool_calls / balance_history
@@ -15,7 +15,7 @@ src/
   pricing.js             ccmr 费用折算 + 余额对账
   rates.js               WorkBuddy 积分费率自学习（最小二乘）
   models.js              模型名归一化（跨源大小写合并）
-  collectors/            每源一个适配器
+  collectors/            每源一个适配器（claude / codex / zcode / dsh / workbuddy / grok / pi / opencode）
 web/                     零构建前端（vanilla JS + ECharts UMD）
 menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 ~/.tokenmeter/           运行时数据（库 / 备份 / pricing.json / 日志）
@@ -25,7 +25,11 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 
 `(ts, tool, model, session_id, project, input_tokens[不含缓存], cached_input, cache_write, output_tokens, reasoning_tokens, total_tokens, trace_id, dedup_key UNIQUE)`
 
-**口径**：Anthropic 系（Claude Code/ccmr/dsh）`input_tokens` 不含缓存，total = 四项之和；OpenAI 系（Codex/ZCode/WorkBuddy/Grok）input 已含 cached，入库拆为 新输入/缓存命中 两列。total = input + cache_write + output。
+**口径**：Anthropic 系（Claude Code/ccmr/dsh/Pi/OpenCode）`input_tokens` 不含缓存，total = 四项之和；OpenAI 系（Codex/ZCode/WorkBuddy/Grok）input 已含 cached，入库拆为 新输入/缓存命中 两列。total = input + cache_write + output。
+
+两类口径落库后是同一个公式：`total_tokens = input_tokens + cached_input + cache_write + output_tokens`。
+`reasoning_tokens` 只作信息列，**任何源都不得把它再加进 total**——Pi 与 OpenCode 的 reasoning
+都已含在 output 内，重复相加会凭空多算。
 
 ## 数据源格式笔记
 
@@ -55,6 +59,33 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 
 ### Grok Build
 `~/.grok/sessions/<URL编码项目目录>/<会话id>/updates.jsonl`：`turn_completed.usage` 带全量明细（含 cachedRead/reasoning/modelCalls/costUsdTicks 厂商成本刻度）与 `modelUsage` 逐模型拆分；timestamp 为 Unix 秒。工具调用在 `tool_call` 事件（title/kind）。注意 `_meta.totalTokens` 是会话上下文水位而非轮次用量，勿用。
+
+### Pi
+`~/.pi/agent/sessions/<编码cwd>/<ISO时间>_<会话uuid>.jsonl`，追加式。用量在 `type=message` 的
+`message.usage`（input/output/cacheRead/cacheWrite/reasoning + **逐项 USD 成本**），工具调用在
+assistant 内容的 `toolCall` 块。
+- **project 只能取首行 `type=session` 的 `cwd`**：目录名把 `/` 换成了 `-`（`--Users-x-Vibing-daily-test--`），
+  `daily-test` 与 `daily/test` 编码后同形，无法反推。而增量扫描从字节游标往后读、读不到首行，
+  所以 project 必须随 collector state 落库带过后续轮次，否则续写的事件会是 `project=null`（静默）
+- 会话 id 取文件名 `_` 之后的 uuid（实测与 session 记录的 id 一致），去重键为 `pi:<会话>:<记录id>`；
+  记录 id 只有 8 位十六进制，**不带会话前缀会在数万条量级上生日碰撞**
+- 模型名保留厂商原样：openrouter 通路是 `deepseek/deepseek-v4-flash-0731`，与直连的 `deepseek-v4-flash`
+  是不同价格的不同路由，**不做前缀剥离合并**
+- 用量全 0 的记录（空调用/中断）按 `total <= 0` 跳过，与 Grok/ZCode 一致
+
+### OpenCode
+`opencode.db`（SQLite + WAL）。库位置随 XDG 走——`$XDG_DATA_HOME` 或 `~/.local/share`，
+Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），三个候选全登记、不存在的跳过。
+- 一条 assistant `message` = 一次 API 调用，用量在 `data` 列 JSON 的 `tokens`
+  （实测 session 表的 `tokens_*` 聚合列恰等于各 message 之和，故 message 级不重不漏）；
+  user 消息没有 `tokens`，须跳过而不是记成 0 用量事件
+- 工具调用在 `part` 表 `data.type='tool'`（`tool` 为名、`callID` 去重）
+- **rowid 水位在这张表上不够**：`message`/`part` 都是 `ON DELETE CASCADE`，session 还带 `revert`
+  列——删掉最大 rowid 后 SQLite 会把该号让给下一条插入，新消息的 rowid 就可能不大于水位而被
+  静默跳过。故每轮先比 `MAX(rowid)`：表变短即说明删过行，水位退回 0 整表重读（dedup 幂等）。
+  ZCode 的 `model_usage` 只追加，没有这个问题——同为 sqlite 源也不能照抄增量策略
+- 残留边界：若"删行"与"插新行"之间一次扫描都没发生，缩短信号会被错过；这种情况需靠
+  `SOURCES.version` 自增触发一次全量重扫补回
 
 ## 关键机制
 
