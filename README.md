@@ -6,7 +6,7 @@
 
 > 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
-## 支持的工具（7 源）
+## 支持的工具（9 源）
 
 | 工具 | 数据位置 | 能看到什么 |
 |---|---|---|
@@ -17,6 +17,8 @@
 | dsh（DeepSeek Harness） | `~/.dsh/sessions` | 逐请求明细（zstd 压缩会话） |
 | WorkBuddy | `~/.WorkBuddy/projects` | 逐请求明细 + **积分费率自学习**（credit 账本 × token 最小二乘） |
 | Grok Build | `~/.grok/sessions` | 轮次用量明细（含厂商侧成本刻度）、工具调用 |
+| Pi | `~/.pi/agent/sessions` | 逐请求明细、工具调用（会话 JSONL 自带 USD 成本明细） |
+| OpenCode | `~/.local/share/opencode/opencode.db` | 逐请求明细（message 表）、工具调用 |
 
 不支持的：网页版聊天（ChatGPT/豆包/DeepSeek 网页等）——token 计数在服务端，本地无留痕，原理上不可统计。
 
