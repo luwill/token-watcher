@@ -129,6 +129,14 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 
 ### 1.4.2（2026-09-16，待发布）
 
+- **修复 1.4.1 引入的回归：dsh 整源静默归零。** 1.4.1 把 zstd 解压改为优先使用 Node
+  内置实现（为解决 launchd 下找不到外部 zstd 的问题），但内置的 `zstdDecompressSync`
+  与 `createZstdDecompress` 都只解**第一帧**就结束且不报错。而 dsh 是追加式多帧写入，
+  实测单个会话文件有 5800+ 帧——外部 zstd 解出 19MB，内置实现只解出 226 字节。
+  现改为以外部 zstd 为准（仍显式试常见绝对路径以解决 launchd 的 PATH 问题），
+  仅在确认文件只含单帧时才回落内置实现，多帧又无外部 zstd 时大声报错而非静默少算。
+  **使用 dsh 源的用户请从 1.4.1 升级。**
+
 - 新增 `token-watcher install-agent` / `uninstall-agent`，把服务装成 macOS 开机自启项。
   此前 README 指向 `npm run install-agent`，但 npm scripts 对全局安装的用户不可见，
   且那条命令只负责 `launchctl bootstrap`、从不生成 plist，plist 也不随包发布——

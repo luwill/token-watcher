@@ -26,27 +26,37 @@ const ZSTD_BINS = ['zstd', '/opt/homebrew/bin/zstd', '/usr/local/bin/zstd', '/us
  *   回落到顺序解析 request/header 维护的当前模型；cwd 来自 session 记录。
  * - 解压优先用 Node 内置 zstd，旧版 Node 回落到外部 zstd（含常见绝对路径），都没有则整源跳过。
  */
+/** zstd 帧魔数。dsh 按批追加独立帧，单个会话文件实测有数千帧 */
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
 /**
- * 优先用 Node 内置 zstd（Node ≥ 23.8），彻底不依赖外部可执行文件。
+ * 解压 zstd。**必须完整支持多帧**：dsh 是追加式写入，每批记录压成一个独立帧接在
+ * 文件末尾，实测单个会话文件有 5800+ 帧，CLI 解出 19MB 而只解首帧只有 226 字节。
  *
- * 这不只是省事：常驻服务由 launchd 拉起，PATH 里没有 homebrew 目录，守护进程因此
- * 长期报 "zstd not installed"、解不开任何 dsh 快照——只有人在交互 shell 里手跑 scan
- * 才正常，面板于是一直停在旧数据。内置实现让两种场景行为一致。
- * 旧版 Node 没有内置实现，回落到 CLI，并显式试几个常见绝对路径。
+ * Node 内置的 zstdDecompressSync 与 createZstdDecompress 都只解第一帧就结束，
+ * 且不报错——用它做主路径会让整源静默归零（1.4.1/1.4.2 就是这么坏的）。
+ * 因此以外部 zstd 为准，并显式试几个常见绝对路径：launchd 的 PATH 是系统默认，
+ * 不含 homebrew，这是当初改用内置实现的起因。
+ *
+ * 只有确认文件仅含单帧时才回落到内置实现。宁可大声失败，也不要悄悄少算。
  */
 async function decompress(path) {
-  if (typeof zlib.zstdDecompressSync === 'function') {
-    return zlib.zstdDecompressSync(await readFile(path)).toString('utf8');
-  }
   for (const bin of ZSTD_BINS) {
     try {
-      const { stdout } = await execFileP(bin, ['-dc', path], { maxBuffer: 256 * 1024 * 1024 });
+      const { stdout } = await execFileP(bin, ['-dc', path], { maxBuffer: 1024 * 1024 * 1024 });
       return stdout;
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err; // 真正的解压失败要抛出去，不要被当成"没装"
+      if (err.code !== 'ENOENT') throw err; // 真正的解压失败要抛出去，不能当成"没装"
     }
   }
-  throw new Error('zstd 不可用：当前 Node 无内置 zstd，且 PATH 与常见安装路径下均无 zstd');
+  if (typeof zlib.zstdDecompressSync === 'function') {
+    const buf = await readFile(path);
+    // 魔数可能在压缩数据里偶然出现，所以这个判定只会高估帧数——方向是安全的：
+    // 判成多帧最多是多要求一次外部 zstd，绝不会把多帧文件当单帧而截断。
+    if (buf.indexOf(ZSTD_MAGIC, 1) === -1) return zlib.zstdDecompressSync(buf).toString('utf8');
+    throw new Error(`${path} 含多个 zstd 帧，Node 内置实现只能解第一帧。请安装 zstd：brew install zstd`);
+  }
+  throw new Error('zstd 不可用：PATH 与常见安装路径下均无 zstd，请执行 brew install zstd');
 }
 
 export async function collectDshFile(store, { path, fileId }) {
