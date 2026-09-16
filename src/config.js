@@ -65,7 +65,9 @@ export const SOURCES = [
     roots: [join(HOME, '.dsh/sessions')],
     kind: 'zst',
     collector: 'dsh',
-    version: 1,
+    // v2: 认 v3 会话结构（assistant/message + data.usage）。2026-08-14 dsh 切格式后
+    // 本源静默归零一个月，升版触发全量重扫补回这段时间的用量
+    version: 2,
   },
   {
     tool: 'grok',
