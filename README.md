@@ -35,9 +35,9 @@ cd token-watcher && npm install
 npm run serve
 ```
 
-要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）；dsh 源需要系统 `zstd`（`brew install zstd`，缺失自动跳过该源）。
+要求：**Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。dsh 源需要解 zstd：Node ≥ 23.8 用内置实现，更早的版本回落到系统 `zstd`（`brew install zstd`），两者都没有时自动跳过该源。
 
-平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）。Windows / Linux 上核心链路（采集、面板、API）随 CI 在 macOS + Ubuntu + Windows 三平台跑回归，包含"装成依赖后能否真正跑起来"的安装冒烟。菜单栏 App 与 launchd 开机自启为 macOS 专属；dsh 源依赖系统 `zstd`，Windows 上一般没有，会自动跳过。
+平台支持：**macOS 全功能验证**（含菜单栏 App 与 launchd）。Windows / Linux 上核心链路（采集、面板、API）随 CI 在 macOS + Ubuntu + Windows 三平台跑回归，包含"装成依赖后能否真正跑起来"的安装冒烟。菜单栏 App 与 launchd 开机自启为 macOS 专属；dsh 源在 Node ≥ 23.8 上用内置 zstd，更早版本需系统 `zstd`（Windows 上一般没有，会自动跳过）。
 
 开发与测试：`npm test` 运行五层回归——语法检查、import 冒烟（拦模块级错误，`node --check` 看不见）、静态断言、前端纯函数行为、端到端冒烟（fixtures 黄金数字 + 幂等 + API 结构）。零依赖、离线运行，GitHub Actions 上跑 macOS/Ubuntu × Node 22.13/24 矩阵。
 
