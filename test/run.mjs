@@ -9,7 +9,7 @@
  *     易错点），scan 两次（幂等），断言 DB 黄金数字与 /api/summary 结构
  */
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, appendFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -19,6 +19,8 @@ import net from 'node:net';
 import http from 'node:http';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+// 数据源注册表是多层断言的共同基准（前端登记、健康表长度），顶层导入一次
+const { SOURCES } = await import(pathToFileURL(join(ROOT, 'src/config.js')).href);
 let failed = 0;
 const ok = (name, cond, detail = '') => {
   if (cond) console.log(`  ✓ ${name}`);
@@ -209,7 +211,11 @@ console.log('\n[2b] 前端纯函数（lib/）');
   ok('MODEL_PALETTE 为 8 槽', MODEL_PALETTE.length === 8, String(MODEL_PALETTE.length));
   ok('MODEL_PALETTE 使用校验过的色板', MODEL_PALETTE.join(',') ===
     '#3987e5,#d95926,#199e70,#c98500,#d55181,#008300,#9085e9,#e66767', MODEL_PALETTE.join(','));
-  ok('每个数据源都有品牌色', Object.keys(TOOL_COLORS).length === 7, String(Object.keys(TOOL_COLORS).length));
+  // 与注册表交叉核对，而不是数个数：新增了源却忘了登记配色/标签，
+  // 面板上就是一条无色无名的堆叠段——这种漏登记正是"加源"最容易漏的一步。
+  const { TOOL_LABEL } = await lib('theme.js');
+  const unstyled = SOURCES.filter(s => !TOOL_COLORS[s.tool] || !TOOL_LABEL[s.tool]).map(s => s.tool);
+  ok('每个注册数据源都有品牌色与标签', unstyled.length === 0, `缺登记: ${unstyled.join(',')}`);
 
   // ---- 悬浮框定位：只 appendToBody 不够，图表贴顶时会被浏览器窗口继续裁 ----
   ok('悬浮框挂到 body（脱离 overflow:hidden 的图表容器）',
@@ -381,6 +387,48 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
     z.close();
   }
 
+  // Pi：首行 session 带 cwd（project 唯一来源）+ 同 id 重复行 dedup + toolCall 块
+  const piMsg = (id, tsIso, usage, extra = {}) => JSON.stringify({
+    type: 'message', id, parentId: null, timestamp: tsIso,
+    message: {
+      role: 'assistant', api: 'openai-completions', provider: 'deepseek',
+      model: 'Pi-Test-Model', timestamp: Date.parse(tsIso) - 1000, usage, ...extra,
+    },
+  });
+  w(join(HOME, '.pi/agent/sessions/--work-projG--/2026-09-16T00-00-00-000Z_s-pi.jsonl'), [
+    JSON.stringify({ type: 'session', version: 3, id: 's-pi', timestamp: ISO(70000), cwd: '/work/projG' }),
+    piMsg('p1', ISO(60000), { input: 300, output: 40, cacheRead: 1200, cacheWrite: 0, reasoning: 10, totalTokens: 1540 }),
+    piMsg('p1', ISO(60000), { input: 300, output: 40, cacheRead: 1200, cacheWrite: 0, reasoning: 10, totalTokens: 1540 }), // 重复行 → dedup
+    piMsg('p2', ISO(40000), { input: 100, output: 20, cacheRead: 0, cacheWrite: 50, reasoning: 0, totalTokens: 170 },
+      { content: [{ type: 'toolCall', id: 'call_pi1', name: 'bash', arguments: '{}' }] }),
+  ]);
+
+  // OpenCode：sqlite（message.data.tokens 逐请求；part 的 tool 块 → 工具调用）
+  const ocDir = join(HOME, '.local/share/opencode');
+  mkdirSync(ocDir, { recursive: true });
+  {
+    const o = new DatabaseSync(join(ocDir, 'opencode.db'));
+    o.exec(`CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT)`);
+    o.exec(`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`);
+    o.exec(`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`);
+    o.prepare(`INSERT INTO session VALUES ('s-oc', '/work/projH', 'title')`).run();
+    // user 消息没有 tokens：必须跳过而不是记成 0 事件
+    o.prepare(`INSERT INTO message VALUES ('oc-u1', 's-oc', ?, ?, ?)`)
+      .run(NOW - 25000, NOW - 25000, JSON.stringify({ role: 'user', time: { created: NOW - 25000 } }));
+    o.prepare(`INSERT INTO message VALUES ('oc-a1', 's-oc', ?, ?, ?)`)
+      .run(NOW - 24000, NOW - 24000, JSON.stringify({
+        role: 'assistant', modelID: 'Oc-Test-Model', providerID: 'prov', cost: 0,
+        tokens: { total: 700, input: 200, output: 60, reasoning: 5, cache: { read: 400, write: 40 } },
+        time: { created: NOW - 24000, completed: NOW - 23000 },
+      }));
+    o.prepare(`INSERT INTO part VALUES ('oc-p1', 'oc-a1', 's-oc', ?, ?, ?)`)
+      .run(NOW - 23500, NOW - 23500, JSON.stringify({
+        type: 'tool', tool: 'webfetch', callID: 'oc-call-1',
+        state: { status: 'completed', time: { start: NOW - 23500, end: NOW - 23400 } },
+      }));
+    o.close();
+  }
+
   // 本地定价（离线可算费用；deepseek/glm 覆盖 fixtures 模型）
   mkdirSync(join(HOME, '.tokenmeter'), { recursive: true });
   writeFileSync(join(HOME, '.tokenmeter', 'pricing.json'), JSON.stringify({
@@ -389,6 +437,8 @@ const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
       'deepseek-v4.1-flash': { currency: 'CNY', input_miss: 2, input_hit: 0.4, output: 8 },
       'glm-5.3-flash': { currency: 'CNY', input_miss: 1, input_hit: 0.3, output: 4 },
       'gpt-test': { currency: 'CNY', input_miss: 10, input_hit: 2, output: 30 },
+      'pi-test-model': { currency: 'CNY', input_miss: 3, input_hit: 0.6, output: 9 },
+      'oc-test-model': { currency: 'CNY', input_miss: 5, input_hit: 1, output: 15 },
     },
   }));
 }
@@ -416,8 +466,14 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('grok 2100（秒→毫秒换算）', byTool.grok?.t === 2100);
   ok('workbuddy 550', byTool.workbuddy?.t === 550);
   ok('zcode 860', byTool.zcode?.t === 860);
+  // Pi/OpenCode 口径实测：total = 新输入 + 缓存读 + 缓存写 + 输出，reasoning 已含在 output 内。
+  // 若误把 reasoning 再加一遍，pi 会变成 1550、opencode 会变成 705——这两个数就是防线。
+  ok('pi 1710（input 不含缓存，reasoning 不重复计入）', byTool.pi?.t === 1710, JSON.stringify(byTool.pi));
+  ok('pi 2 事件（同 id 重复行 dedup）', byTool.pi?.n === 2, JSON.stringify(byTool.pi));
+  ok('opencode 700（user 消息无 tokens 不入库）', byTool.opencode?.t === 700, JSON.stringify(byTool.opencode));
+  ok('opencode 1 事件', byTool.opencode?.n === 1, JSON.stringify(byTool.opencode));
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok('全源合计 14735', total === 14735, String(total));
+  ok('全源合计 17145', total === 17145, String(total));
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
@@ -426,12 +482,14 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok('事件总数 7（幂等）', n2 === 7, String(n2));
+  ok('事件总数 10（幂等）', n2 === 10, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
   ok('grok 工具调用 1', tc.grok === 1);
   ok('zcode 工具调用 1', tc.zcode === 1);
+  ok('pi 工具调用 1（assistant 内容里的 toolCall 块）', tc.pi === 1, String(tc.pi));
+  ok('opencode 工具调用 1（part 表 type=tool）', tc.opencode === 1, String(tc.opencode));
 
   // Codex 配额快照
   const quota = JSON.parse(db.prepare(`SELECT data FROM quota WHERE tool='codex'`).get()?.data ?? 'null');
@@ -444,6 +502,10 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('zcode project=projF（session.directory）', proj.zcode === 'projF');
   // 目录名解项目名曾用 lastIndexOf('/') / split('/')，Windows 上分隔符是反斜杠会解错
   ok('workbuddy project=projE（目录名解析，跨平台分隔符）', proj.workbuddy === 'projE', String(proj.workbuddy));
+  // Pi 的目录名把 / 换成了 -，无法可靠还原（daily-test 与 daily/test 同形）；
+  // 唯一可信来源是首行 session 记录的 cwd，须由 collector state 带过增量轮次。
+  ok('pi project=projG（首行 session.cwd，非目录名反推）', proj.pi === 'projG', String(proj.pi));
+  ok('opencode project=projH（session.directory）', proj.opencode === 'projH', String(proj.opencode));
   db.close();
 }
 
@@ -478,12 +540,14 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 14735 && Array.isArray(s.by_day) && s.by_day.length >= 1
-      && Array.isArray(s.health) && s.health.length === 7 && s.costs && Array.isArray(s.costs.by_day)
-      && Array.isArray(s.recent) && s.recent.length === 7,
-      `totals=${s.totals?.all_time_tokens} health=${s.health?.length}`);
+      res.status === 200 && s.totals?.all_time_tokens === 17145 && Array.isArray(s.by_day) && s.by_day.length >= 1
+      && Array.isArray(s.health) && s.health.length === 9 && s.costs && Array.isArray(s.costs.by_day)
+      && Array.isArray(s.recent) && s.recent.length === 10,
+      `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
+    // 健康表必须随注册表一起长——曾经它是一份硬编码工具清单，加源必漏
+    ok('健康表覆盖全部注册源', s.health.length === SOURCES.length, `${s.health.length} vs ${SOURCES.length}`);
     const okTools = s.health.filter(h => h.status === 'ok').length;
-    ok('健康 7 源全 ok（dsh 无 fixture 应为 empty 而非 error）', okTools === 6, `${okTools} ok（dsh=empty）`);
+    ok('健康 9 源全 ok（dsh 无 fixture 应为 empty 而非 error）', okTools === 8, `${okTools} ok（dsh=empty）`);
     ok('费用 by_day 有值（本地定价离线可算）', s.costs.by_day.length >= 1 && s.costs.today_cny >= 0);
 
     // 离线模式：不发任何外网请求，用本地缓存/手动汇率/种子价继续出数
@@ -516,6 +580,68 @@ console.log('\n[4] API 冒烟');
       (ec.headers.get('content-type') || '').includes('javascript'), ec.headers.get('content-type'));
   }
   child.kill('SIGTERM');
+}
+
+/* ---------- 第 5 层：增量续写（Pi 的 project 必须跨轮次存活） ----------
+ * Pi 的目录名把 '/' 换成了 '-'，无法反推项目名；project 的唯一可信来源是首行 session.cwd。
+ * 而增量扫描是从字节游标往后读的——续写轮次根本读不到首行。若 project 不随 collector state
+ * 落库，新事件就会是 project=null：面板上"按项目"从此漏掉这个源的新数据，且不报任何错。 */
+console.log('\n[5] 增量续写');
+{
+  const piFile = join(HOME, '.pi/agent/sessions/--work-projG--/2026-09-16T00-00-00-000Z_s-pi.jsonl');
+  appendFileSync(piFile, JSON.stringify({
+    type: 'message', id: 'p3', timestamp: new Date().toISOString(),
+    message: {
+      role: 'assistant', model: 'Pi-Test-Model',
+      usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10 },
+    },
+  }) + '\n');
+
+  const r = cli(['scan']);
+  ok('续写后 scan 退出码 0', r.status === 0, r.stderr.slice(0, 200));
+
+  const db = new DatabaseSync(dbFile, { readOnly: true });
+  const row = db.prepare("SELECT project, total_tokens FROM events WHERE dedup_key = 'pi:s-pi:p3'").get();
+  ok('续写事件已入库（字节游标继续推进）', row?.total_tokens === 10, JSON.stringify(row));
+  ok('续写事件仍带 project（state 跨轮次存活，未退化为 null）', row?.project === 'projG', String(row?.project));
+  ok('旧事件未被重复插入', db.prepare("SELECT COUNT(*) n FROM events WHERE tool = 'pi'").get().n === 3);
+  db.close();
+}
+
+/* OpenCode 的 message/part 是 ON DELETE CASCADE，session 还带 revert 列——它会删消息。
+ * SQLite 删掉最大 rowid 后会把该号让给下一条插入，于是新消息的 rowid 可能不大于水位，
+ * 纯 rowid 水位会把它整条漏掉，且不报任何错。（ZCode 的 model_usage 只追加，没这个问题。） */
+{
+  const ocDb = join(HOME, '.local/share/opencode', 'opencode.db');
+  {
+    const o = new DatabaseSync(ocDb);
+    o.exec("DELETE FROM message WHERE id = 'oc-a1'"); // 模拟一次 revert
+    o.close();
+  }
+  ok('删行后 scan 退出码 0', cli(['scan']).status === 0);
+
+  const newTs = Date.now();
+  let reused;
+  {
+    const o = new DatabaseSync(ocDb);
+    o.prepare(`INSERT INTO message VALUES ('oc-a2', 's-oc', ?, ?, ?)`).run(newTs, newTs, JSON.stringify({
+      role: 'assistant', modelID: 'Oc-Test-Model',
+      tokens: { total: 123, input: 100, output: 23, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: newTs },
+    }));
+    reused = o.prepare("SELECT rowid AS r FROM message WHERE id = 'oc-a2'").get().r;
+    o.close();
+  }
+  ok('新消息确实复用了被删的 rowid（前提成立，才谈得上防护）', reused === 2, String(reused));
+  ok('rowid 复用后 scan 退出码 0', cli(['scan']).status === 0);
+
+  const db2 = new DatabaseSync(dbFile, { readOnly: true });
+  ok('复用 rowid 的新消息没有被漏掉',
+    db2.prepare("SELECT total_tokens t FROM events WHERE dedup_key = 'opencode:oc-a2'").get()?.t === 123,
+    JSON.stringify(db2.prepare("SELECT dedup_key FROM events WHERE tool='opencode'").all()));
+  ok('被删消息的历史事件仍保留（只读源消失不等于历史作废）',
+    db2.prepare("SELECT COUNT(*) n FROM events WHERE dedup_key = 'opencode:oc-a1'").get().n === 1);
+  db2.close();
 }
 
 /* ---------- 清理 ---------- */
