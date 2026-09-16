@@ -42,6 +42,23 @@ export async function collectXxxFile(store, { tool, path, fileId, offset, state,
 
 改完 collector 后把 `config.js` 里对应源的 `version` +1——版本机制会自动对存量文件全量重扫回填（dedup 保证幂等）。
 
+### 上游换了格式：最隐蔽的一类故障
+
+采集器**不会**因为解析不出东西而报错。上游改了记录类型或字段路径，表现是"扫描正常、退出码 0、
+入库 0 条"——面板上那个源就是一条平线，看起来像"最近没用"。dsh 曾这样静默归零整整一个月
+（详见 `docs/ARCHITECTURE.md` 的 dsh 段）。文件发现通常按扩展名通配，所以连"找不到文件"
+都不会发生，日志里一切正常。
+
+排查与防范：
+
+- 怀疑时先跑一次 `SELECT tool, MAX(ts), COUNT(*) FROM events GROUP BY tool`。某个源的
+  `MAX(ts)` 停在一个整齐的时间点，基本就是那天上游改了格式
+- 到数据目录对比新旧文件名与 `mtime`：并存的新旧两份文件里，旧的冻结时刻就是断点
+- 改完务必让**新旧两种结构各有一份 fixture**，旧格式那份是防止"修好新的、改坏旧的"
+- 新结构的 `dedup_key` 要与旧结构隔开命名空间。迁移期两份文件常并存于同一目录，而会话键
+  多为父目录名，序号撞上就会互相顶掉；旧结构的键则须保持原样，否则重扫时历史事件会被
+  当成新行再插一遍
+
 ## 其他约定
 
 - 零依赖原则：后端只用 Node 内置模块（`node:sqlite`/`node:http`/`node:fs`）；前端零构建（vanilla JS + ECharts UMD）

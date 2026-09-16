@@ -34,7 +34,20 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 ## 数据源格式笔记
 
 ### Claude Code / ccmr（同一解析器）
-`~/.claude/projects/<项目目录>/<会话>.jsonl`，ccmr 用独立 `CLAUDE_CONFIG_DIR=~/.claude-gateway` 同格式。每条 type=assistant 记录的 `message.usage` 即一次 API 调用；`model="<synthetic>"` 为本地合成消息须过滤；同一 message.id+requestId 会因流式分片重复出现 → 全局 dedup。工具调用在 content[] 的 tool_use 块。
+`~/.claude/projects/<项目目录>/<会话>.jsonl`，ccmr 用独立 `CLAUDE_CONFIG_DIR=~/.claude-gateway` 同格式。每条 type=assistant 记录的 `message.usage` 即一次 API 调用；`model="<synthetic>"` 为本地合成消息须过滤；同一 message.id+requestId 会因分片重复出现 → 全局 dedup。工具调用在 content[] 的 tool_use 块。
+
+**一次响应被拆成多行，只有终结块带真实 output_tokens。** 一条 assistant 消息按 content block 分行写入（`apiBlockIndex` 0..n），共享同一个 `message.id`，`input_tokens`/`cache_read_input_tokens` 每行重复，而 `output_tokens` 在前置分片里全是 0，只有最后一块是真值：
+
+```
+block0 thinking   3594/47360/0
+block1 text       3594/47360/0
+block2 tool_use   3594/47360/0
+block3 tool_use   3594/47360/309   ← 唯一带真实输出的一行
+```
+
+官方 Claude Code 每行都重复携带最终 output，取首行等于取最大，看不出问题；**ccmr 网关不写 `requestId`**（官方每行都写），dedup_key 退化成 `tool:msg.id`，四个分片塌成一行，"先到者胜"留下的正是 output=0 的首块。2026-09-16 实测当日丢掉 94.5% 的输出量。
+
+因此 `store.insertEvent` 的去重语义是**"输出更大的后来者补齐该行"**而非纯 `INSERT OR IGNORE`：无冲突时行为不变，且能扛住分片跨增量扫描轮次落到不同批次的情况。不采用"跳过 `stop_reason == null`"，是因为那会新增一条静默丢弃路径——某个源一旦不写该字段就整源归零，正是下面 dsh 踩过的坑。
 
 ### Codex（坑最多）
 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`：
@@ -49,7 +62,19 @@ menubar/                 macOS 菜单栏 App（Swift/AppKit，需 .app bundle）
 `~/.zcode/cli/db/db.sqlite`（WAL，可只读并发）：`model_usage` 表逐请求明细（rowid 水位增量；实测 computed_total=input+output 推得 input 含 cached）；`tool_usage` 表逐工具调用；`session.directory` 取项目名。**WAL 写入不改变主文件 mtime**——mtime 跳过判断对 sqlite 源无效，须每轮执行水位查询（微秒级）。
 
 ### dsh
-`~/.dsh/sessions/**/session.jsonl.zstd`（zstd 压缩，快照式：mtime 变化整体重解析 + dedup）。usage 在 `assistant/chunk` 记录的 `data.chunk.usage`（Anthropic 口径）；模型来自 `request/header.config.model`；cwd 在 `session` 记录。会话文件全同名，以父目录为会话键。
+`~/.dsh/sessions/**/session*.jsonl.zstd`（zstd 压缩，快照式：mtime 变化整体重解析 + dedup）。模型优先取记录自带的 `data.message.source.model`，回落顺序解析 `request/header.config.model`；cwd 在 `session` 记录。口径：input 不含缓存，reasoning 已含在 output 内，`total = input + cacheRead + cacheWrite + output`（v3 自带 `totalTokens`，实测 548/548 恒等）。
+
+**两种记录结构并存，必须都认：**
+
+| | 旧 `session.jsonl.zstd` | v3 `session.v3.jsonl.zstd` |
+|---|---|---|
+| 记录类型 | `assistant/chunk` + `chunk.type=='usage'` | `assistant/message` |
+| usage 路径 | `data.chunk.usage` | `data.usage` |
+| 字段名 | `inputTokens` / `cacheReadTokens` 等 | 不变 |
+
+2026-08-14 dsh 切到 v3，采集器当时只认旧结构，于是**打开文件、一条也匹配不上、返回 0 且不抛错**，整源静默归零一个月（全库停在 165 条，而那之后单日就有 548 次请求 / 5,960 万 tokens）。文件发现一直是按 `.zstd` 通配的，所以表面上"扫到了文件"——没有任何一层会为"解析出 0 条"报警，这是它能瞒一个月的原因。
+
+会话键用父目录名。迁移期新旧两个快照会并存于同一目录，因此 **v3 的 dedup_key 额外带上文件名**（`dsh:${fileId}:${file}:${seq}`），否则 seq 相同的两条互相顶掉；旧结构的键保持原样，避免历史事件在重扫时被当成新行再插一遍。
 
 ### WorkBuddy
 `~/.WorkBuddy/projects/<目录>/<会话>.jsonl`（Electron 版 transcript）：`message.usage`（input 含 cache）；`providerData` 携带真实模型名（sessions 表的 model 列只是别名如 fast-model）与 traceId。
@@ -86,6 +111,18 @@ Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），�
   ZCode 的 `model_usage` 只追加，没有这个问题——同为 sqlite 源也不能照抄增量策略
 - 残留边界：若"删行"与"插新行"之间一次扫描都没发生，缩短信号会被错过；这种情况需靠
   `SOURCES.version` 自增触发一次全量重扫补回
+
+## 计价：DeepSeek 的峰谷价
+
+单价表 `~/.tokenmeter/pricing.json` 记的是**峰时价**，`off_peak` 为谷时折扣系数（DeepSeek 为 0.5）。
+
+峰时的官方定义（api-docs.deepseek.com/quick_start/pricing，2026-09-16 核对）是 **UTC 周一至周五 01:00-04:00 与 06:00-10:00**，其余一切时段按谷时价。三处反直觉，实现时都踩得到：
+
+- 按 **UTC** 而非本地时区（按"北京时间半夜打折"去猜会大面积算错）
+- **整个周末**都是谷时，哪怕落在窗口时刻上
+- 两段峰时之间 **04:00-06:00 是空档**，属谷时
+
+判定以 `PEAK_SQL` 片段落地而非 JS 函数，让分组与计价共用同一份定义；费用卡、按天堆叠图、余额对账三处聚合都带上它。`off_peak` 缺失时回落种子表——老用户的 `pricing.json` 里没有这个字段，若实现成"缺失即不打折"，这个规则对他们就是个静默空操作。
 
 ## 关键机制
 
