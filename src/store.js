@@ -106,6 +106,16 @@ export class Store {
         (ts, tool, model, session_id, project,
          input_tokens, cached_input, cache_write, output_tokens, reasoning_tokens, total_tokens, dedup_key, trace_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    // 去重命中时的补登：同一次 API 响应可能被拆成多行写入（Claude Code transcript 按
+    // content block 分行），input/cached 每行重复，只有终结块带真实 output_tokens，
+    // 先到的行是 0。ccmr 网关还不写 requestId，四个 block 会塌成同一个 dedup_key，
+    // 纯"先到者胜"会把输出永久钉死在 0（实测丢掉 94.5% 的输出量）。
+    // 用量更大的后来者补齐该行；无冲突时行为与从前完全一致。
+    this._supersedeEvent = this.db.prepare(`
+      UPDATE events SET
+        input_tokens = ?, cached_input = ?, cache_write = ?,
+        output_tokens = ?, reasoning_tokens = ?, total_tokens = ?
+      WHERE dedup_key = ? AND output_tokens < ?`);
     this._insertToolCall = this.db.prepare(`
       INSERT OR IGNORE INTO tool_calls (ts, tool, name, session_id, dedup_key)
       VALUES (?, ?, ?, ?, ?)`);
@@ -129,7 +139,14 @@ export class Store {
       e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0, e.dedup_key,
       e.trace_id ?? null
     );
-    return r.changes; // 1=新插入 0=重复被忽略
+    if (r.changes) return 1;
+    // 已存在同 key 的行：若这条携带更多输出，说明先到的是同一次响应的前置分片，补齐它
+    this._supersedeEvent.run(
+      e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
+      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
+      e.dedup_key, e.output_tokens || 0
+    );
+    return 0; // 事件数不变，只是把已有行补全
   }
 
   saveRates(model, fresh, cache, out, turns) {
