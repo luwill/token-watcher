@@ -15,16 +15,30 @@ const PRICING_PATH = join(DATA_DIR, 'pricing.json');
 
 const SEED = {
   // 汇率默认实时拉取；如需固定：设 usd_to_cny 数字并加 usd_to_cny_manual: true
-  _note: '单价为每百万 token；DeepSeek 为峰时价（谷时减半）；编辑后即时生效',
+  _note: '单价为每百万 token；DeepSeek 记峰时价，off_peak 为谷时折扣系数；编辑后即时生效',
   models: {
-    'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 },
-    'deepseek-v4-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 }, // 官方已路由至 V4.1 Flash 同价
-    'deepseek-v4-pro':  { currency: 'USD', input_miss: 1.32,  input_hit: 0.044, output: 3.96 },
+    'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20, off_peak: 0.5 },
+    'deepseek-v4-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20, off_peak: 0.5 }, // 官方已路由至 V4.1 Flash 同价
+    'deepseek-v4-pro':  { currency: 'USD', input_miss: 1.32,  input_hit: 0.044, output: 3.96, off_peak: 0.5 },
     'kimi-k2.6':        { currency: 'CNY', input_miss: 6.50,  input_hit: 1.10,  output: 27.0 },
     'kimi-k2.7-code':   { currency: 'CNY', input_miss: 6.50,  input_hit: 1.30,  output: 27.0 },
     'kimi-k3':          { currency: 'CNY', input_miss: 20.0,  input_hit: 2.00,  output: 100.0 },
   },
 };
+
+/**
+ * DeepSeek 峰谷时段判定（api-docs.deepseek.com/quick_start/pricing，2026-09-16 核对）：
+ * 峰时 = UTC 周一至周五 01:00-04:00 与 06:00-10:00，其余一切时段为谷时，谷时价减半。
+ *
+ * 三个反直觉处，实现时都踩得到：按 UTC 而非本地时区；整个周末都是谷时；
+ * 两段峰时之间的 04:00-06:00 是空档。按"本地时间半夜打折"去猜会大面积算错。
+ * 以 SQL 片段而非 JS 函数落地，是为了让分组与计价共用同一份判定，不会各写一遍再走岔。
+ */
+export const PEAK_SQL = `(
+  CAST(strftime('%w', ts / 1000, 'unixepoch') AS INTEGER) BETWEEN 1 AND 5
+  AND (CAST(strftime('%H', ts / 1000, 'unixepoch') AS INTEGER) BETWEEN 1 AND 3
+    OR CAST(strftime('%H', ts / 1000, 'unixepoch') AS INTEGER) BETWEEN 6 AND 9)
+)`;
 
 let cached = null;
 
@@ -56,17 +70,21 @@ function toCny(amount, currency, rate) {
  */
 function priceOf(model, table, rate) {
   const local = table[model];
+  // 谷时折扣是厂商的计费规则，不是单价。老用户的 pricing.json 里没有 off_peak 字段，
+  // 若实现成"缺失即不打折"，峰谷价对他们就是个静默空操作，故缺失时回落种子表。
+  const offPeak = local?.off_peak ?? SEED.models[model]?.off_peak ?? 1;
   if (local) {
     return {
       inCny: local.currency === 'USD' ? local.input_miss * rate : local.input_miss,
       cacheCny: local.currency === 'USD' ? local.input_hit * rate : local.input_hit,
       outCny: local.currency === 'USD' ? local.output * rate : local.output,
       cacheWCny: 0,
+      offPeak,
     };
   }
   const p = lookupPrice(model);
   if (!p) return null;
-  return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate };
+  return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate, offPeak };
 }
 
 export async function computeCosts(db, days = 30) {
@@ -82,9 +100,9 @@ export async function computeCosts(db, days = 30) {
 
   const agg = (since) => {
     const rows = db.prepare(`
-      SELECT tool, model, SUM(input_tokens) fi, SUM(cached_input) ci,
+      SELECT tool, model, ${PEAK_SQL} AS peak, SUM(input_tokens) fi, SUM(cached_input) ci,
              SUM(cache_write) cw, SUM(output_tokens) oi
-      FROM events WHERE ts >= ? GROUP BY tool, model`).all(since);
+      FROM events WHERE ts >= ? GROUP BY tool, model, peak`).all(since);
     const byModel = new Map(), byTool = new Map(), unpriced = new Set();
     let total = 0;
     for (const r of rows) {
@@ -92,8 +110,8 @@ export async function computeCosts(db, days = 30) {
       if (tokens <= 0) continue;
       const p = priceOf(r.model, table, rate);
       if (!p) { unpriced.add(r.model); continue; }
-      const c = (r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
-        + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny;
+      const c = ((r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
+        + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny) * (r.peak ? 1 : p.offPeak);
       total += c;
       const m = byModel.get(r.model) || { model: r.model, cost_cny: 0, tokens: 0 };
       m.cost_cny += c; m.tokens += tokens; byModel.set(r.model, m);
@@ -115,15 +133,15 @@ export async function computeCosts(db, days = 30) {
   // 按天 × 模型成本（供"按天花费"堆叠柱形图）
   const rangeStart = days > 0 ? dayStart.getTime() - (days - 1) * 86_400_000 : 0;
   const dayRows = db.prepare(`
-    SELECT date(ts/1000, 'unixepoch', 'localtime') d, model,
+    SELECT date(ts/1000, 'unixepoch', 'localtime') d, model, ${PEAK_SQL} AS peak,
            SUM(input_tokens) fi, SUM(cached_input) ci, SUM(cache_write) cw, SUM(output_tokens) oi
-    FROM events WHERE ts >= ? GROUP BY d, model ORDER BY d`).all(rangeStart);
+    FROM events WHERE ts >= ? GROUP BY d, model, peak ORDER BY d`).all(rangeStart);
   const byDayMap = new Map();
   for (const r of dayRows) {
     const p = priceOf(r.model, table, rate);
     if (!p) continue;
-    const c = (r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
-      + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny;
+    const c = ((r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
+      + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny) * (r.peak ? 1 : p.offPeak);
     if (!byDayMap.has(r.d)) byDayMap.set(r.d, { day: r.d, models: {}, total: 0 });
     const e = byDayMap.get(r.d);
     e.models[r.model] = (e.models[r.model] || 0) + c;
@@ -164,12 +182,13 @@ export function computeRecon(db, store, pricing, { hours = 24, rate = 7.2 } = {}
     if (prefix) {
       spend = 0;
       for (const m of db.prepare(`
-        SELECT model, SUM(input_tokens) fi, SUM(cached_input) ci, SUM(output_tokens) oi
-        FROM events WHERE tool = 'ccmr' AND ts >= ? GROUP BY model`).all(since)) {
+        SELECT model, ${PEAK_SQL} AS peak, SUM(input_tokens) fi, SUM(cached_input) ci, SUM(output_tokens) oi
+        FROM events WHERE tool = 'ccmr' AND ts >= ? GROUP BY model, peak`).all(since)) {
         if (!m.model?.startsWith(prefix)) continue;
         const p = priceOf(m.model, table, rate);
         if (!p) continue;
-        spend += (m.fi / 1e6) * p.inCny + (m.ci / 1e6) * p.cacheCny + (m.oi / 1e6) * p.outCny;
+        spend += ((m.fi / 1e6) * p.inCny + (m.ci / 1e6) * p.cacheCny + (m.oi / 1e6) * p.outCny)
+          * (m.peak ? 1 : p.offPeak);
       }
     }
     out.push({ provider: b.provider, id: b.id, balance: b.balance, delta, spend, hours });

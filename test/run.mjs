@@ -493,6 +493,9 @@ let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随�
       'oc-test-model': { currency: 'CNY', input_miss: 5, input_hit: 1, output: 15 },
       'dsh-test-model': { currency: 'CNY', input_miss: 2, input_hit: 0.4, output: 8 },
       'dsh-header-model': { currency: 'CNY', input_miss: 2, input_hit: 0.4, output: 8 },
+      // 只被第 6 节使用。故意不写 off_peak：老用户的 pricing.json 里没有这个字段，
+      // 若实现成"缺失即不打折"，峰谷价对他们就是个静默空操作
+      'deepseek-v4-pro': { currency: 'CNY', input_miss: 2000, input_hit: 0, output: 0 },
     },
   }));
 }
@@ -719,6 +722,69 @@ console.log('\n[5] 增量续写');
   ok('被删消息的历史事件仍保留（只读源消失不等于历史作废）',
     db2.prepare("SELECT COUNT(*) n FROM events WHERE dedup_key = 'opencode:oc-a1'").get().n === 1);
   db2.close();
+}
+
+/* ---------- 第 6 层：DeepSeek 峰谷价 ----------
+ * 官方规则（api-docs.deepseek.com/quick_start/pricing，2026-09-16 核对）：
+ *   峰时 = UTC 周一至周五 01:00-04:00 与 06:00-10:00；其余一切时段为谷时，谷时价减半。
+ * 三个容易想当然的点，各自钉一条用例：按 UTC 不按本地时区、整个周末都是谷时、
+ * 两段峰时之间 04:00-06:00 是空档。用固定时刻断言，否则结论随测试运行时刻漂移。
+ */
+console.log('\n[6] DeepSeek 峰谷价');
+{
+  const { PEAK_SQL } = await import(pathToFileURL(join(ROOT, 'src/pricing.js')).href);
+  const mem = new DatabaseSync(':memory:');
+  mem.exec('CREATE TABLE events (ts INTEGER)');
+  const isPeak = (iso) => {
+    mem.exec('DELETE FROM events');
+    mem.prepare('INSERT INTO events VALUES (?)').run(Date.parse(iso));
+    return mem.prepare(`SELECT ${PEAK_SQL} AS p FROM events`).get().p === 1;
+  };
+  // 2026-09-14 一 / 16 三 / 18 五 / 19 六 / 20 日
+  const cases = [
+    ['2026-09-16T00:59:00Z', false, '峰时窗口前一分钟'],
+    ['2026-09-16T01:00:00Z', true,  '第一段峰时起点'],
+    ['2026-09-16T03:59:00Z', true,  '第一段峰时末尾'],
+    ['2026-09-16T04:00:00Z', false, '两段峰时之间的空档'],
+    ['2026-09-16T05:59:00Z', false, '空档末尾'],
+    ['2026-09-16T06:00:00Z', true,  '第二段峰时起点'],
+    ['2026-09-16T09:59:00Z', true,  '第二段峰时末尾'],
+    ['2026-09-16T10:00:00Z', false, '峰时窗口后'],
+    ['2026-09-14T02:00:00Z', true,  '周一在峰时窗口内'],
+    ['2026-09-18T07:00:00Z', true,  '周五在峰时窗口内'],
+    ['2026-09-19T02:00:00Z', false, '周六即便在窗口时刻也是谷时'],
+    ['2026-09-20T07:00:00Z', false, '周日即便在窗口时刻也是谷时'],
+  ];
+  for (const [iso, want, why] of cases) {
+    ok(`${iso} ${want ? '峰' : '谷'}时（${why}）`, isPeak(iso) === want);
+  }
+  mem.close();
+
+  // 折扣是否真的落到金额上：同样的 token 数，只有时刻不同
+  const pdb = new DatabaseSync(dbFile);
+  const ins = pdb.prepare(`INSERT OR IGNORE INTO events
+    (ts, tool, model, session_id, project, input_tokens, cached_input, cache_write,
+     output_tokens, reasoning_tokens, total_tokens, dedup_key)
+    VALUES (?, 'ccmr', 'deepseek-v4-pro', 's-peak', 'projK', 1000, 0, 0, 0, 0, 1000, ?)`);
+  ins.run(Date.parse('2026-09-16T02:00:00Z'), 'peak:1'); // 峰时 → 1000/1e6 × 2000 = ¥2
+  ins.run(Date.parse('2026-09-16T05:00:00Z'), 'peak:2'); // 空档 → ¥1
+  ins.run(Date.parse('2026-09-19T02:00:00Z'), 'peak:3'); // 周六 → ¥1
+  pdb.close();
+
+  const port = await new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), 'serve', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let buf = '';
+  child.stdout.on('data', d => { buf += d; });
+  const up = await new Promise(r => { const t = setTimeout(() => r(false), 30000); child.stdout.on('data', () => { if (buf.includes('listening')) { clearTimeout(t); r(true); } }); });
+  ok('serve 启动（峰谷价）', up);
+  if (up) {
+    const s6 = await (await fetch(`http://127.0.0.1:${port}/api/summary?days=0`)).json();
+    const m = s6.costs?.by_model?.find(x => x.model === 'deepseek-v4-pro');
+    // 全按峰时算是 ¥6，正确应为 ¥2+¥1+¥1=¥4
+    ok('谷时减半落到金额上（¥4 而非 ¥6）', m && Math.abs(m.cost_cny - 4) < 1e-9,
+      JSON.stringify(m));
+  }
+  child.kill();
 }
 
 /* ---------- 清理 ---------- */
