@@ -24,6 +24,15 @@ function opencodeDbPaths() {
   return [...new Set(bases.filter(Boolean).map(b => join(b, 'opencode', 'opencode.db')))];
 }
 
+/**
+ * apiBilled：该源的用量是否计入"你自己的 API key 余额"。
+ *
+ * 只有标了的源才参与余额对账（`computeRecon`）。ccmr 是路由器，会把请求分发到
+ * DeepSeek / Kimi / GLM 等多个厂商，所以归属维度是"用谁的钱包"而非"哪个厂商"——
+ * 具体厂商由模型 id 前缀决定。未标注的源要么走订阅（claude-code / codex / grok），
+ * 要么走自家积分（workbuddy），不扣你的 key，计进去就是虚高。
+ * 拿不准的源宁可不标：少算会显示成缺口（看得见），多算会掩盖真实缺口（看不见）。
+ */
 export const SOURCES = [
   {
     tool: 'claude-code',
@@ -42,6 +51,7 @@ export const SOURCES = [
     // v3: 网关不写 requestId，一次响应的多个 content block 塌成同一 dedup_key，
     // 输出曾被钉死在首个分片的 0；修复后需全量重扫补正存量行
     version: 3,
+    apiBilled: true, // 路由器用你自己的各厂商 API key，用量计入余额对账
   },
   {
     tool: 'codex',
@@ -68,6 +78,7 @@ export const SOURCES = [
     // v2: 认 v3 会话结构（assistant/message + data.usage）。2026-08-14 dsh 切格式后
     // 本源静默归零一个月，升版触发全量重扫补回这段时间的用量
     version: 2,
+    apiBilled: true, // 与 ccmr 花的是同一个 DeepSeek 账户
   },
   {
     tool: 'grok',

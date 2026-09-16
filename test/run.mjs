@@ -822,6 +822,45 @@ console.log('\n[7] 无 zstd CLI 时仍能解 dsh');
   }
 }
 
+/* ---------- 第 8 层：余额对账的归属 ----------
+ * recon 把"账户余额掉了多少"和"我们算出花了多少"对比。它原先写死 tool='ccmr'，
+ * 但 dsh 花的是同一个 DeepSeek 账户——于是永远显示巨大缺口，而缺口的一半是自己漏算的。
+ * 与之相对，workbuddy 用 deepseek 模型但走自家积分、codex 是订阅制，都不扣这个 key，
+ * 光按模型前缀放开又会多算。归属只能显式声明，不能从数据猜。
+ */
+console.log('\n[8] 余额对账的归属');
+{
+  const { Store } = await import(pathToFileURL(join(ROOT, 'src/store.js')).href);
+  const { computeRecon } = await import(pathToFileURL(join(ROOT, 'src/pricing.js')).href);
+  const st = new Store(dbFile);
+  const now = Date.now();
+  st.db.exec(`DELETE FROM balance_history WHERE provider='deepseek'`);
+  st.db.prepare('INSERT INTO balance_history VALUES (?,?,?)').run(now - 3_600_000, 'deepseek', 100);
+  st.db.prepare('INSERT INTO balance_history VALUES (?,?,?)').run(now - 60_000, 'deepseek', 90);
+  st.db.prepare(`INSERT OR REPLACE INTO quota (tool, ts, data) VALUES ('balance:deepseek', ?, ?)`)
+    .run(now, JSON.stringify({ provider: 'DeepSeek', balance: 90, currency: 'CNY' }));
+
+  const PEAK = Date.parse('2026-09-16T02:00:00Z'); // 周三峰时，避免谷时折扣干扰
+  const ev = (tool, model, key) => st.insertEvent({
+    ts: PEAK, tool, model, session_id: 's-recon', project: 'projR',
+    input_tokens: 1_000_000, cached_input: 0, cache_write: 0, output_tokens: 0,
+    reasoning_tokens: 0, total_tokens: 1_000_000, dedup_key: key,
+  });
+  ev('ccmr', 'deepseek-recon-test', 'recon:1');      // 计入：ccmr 扣该账户
+  ev('dsh', 'deepseek-recon-test', 'recon:2');       // 计入：dsh 扣同一账户 ← 本次修的
+  ev('workbuddy', 'deepseek-recon-test', 'recon:3'); // 不计：走自家积分
+  ev('ccmr', 'deepseek/recon-test', 'recon:4');      // 不计：OpenRouter 形态，扣的是 OpenRouter
+
+  // 只给测试模型定价，其余模型离线查不到价会被跳过，不干扰本节
+  const pricing = { models: { 'deepseek-recon-test': { currency: 'CNY', input_miss: 2, input_hit: 0, output: 0 } } };
+  const r = computeRecon(st.db, st, pricing, { hours: 24, rate: 7 })
+    .find(x => x.id === 'deepseek');
+  ok('对账覆盖同账户的全部工具（ccmr+dsh=¥4，非仅 ccmr 的 ¥2）',
+    r && Math.abs(r.spend - 4) < 1e-9, JSON.stringify(r));
+  ok('余额差值照常读出（-10）', r && Math.abs(r.delta + 10) < 1e-9, String(r?.delta));
+  st.db.close();
+}
+
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
 console.log(failed ? `\n✗ ${failed} 项失败` : '\n✓ 全部通过');

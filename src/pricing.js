@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, SOURCES } from './config.js';
 import { ensurePrices, lookupPrice } from './litellm.js';
 import { ensureFxRate } from './fx.js';
 
@@ -181,10 +181,17 @@ export function computeRecon(db, store, pricing, { hours = 24, rate = 7.2 } = {}
     let spend = null;
     if (prefix) {
       spend = 0;
+      // 参与对账的源从注册表推导，不再写死 'ccmr'：dsh 花的是同一个 DeepSeek 账户，
+      // 漏掉它会让对账永远显示巨大缺口，而缺口的一半是自己没算。
+      const tools = SOURCES.filter(x => x.apiBilled).map(x => x.tool);
+      if (!tools.length) { out.push({ provider: b.provider, id: b.id, balance: b.balance, delta, spend: null, hours }); continue; }
+      const ph = tools.map(() => '?').join(',');
       for (const m of db.prepare(`
         SELECT model, ${PEAK_SQL} AS peak, SUM(input_tokens) fi, SUM(cached_input) ci, SUM(output_tokens) oi
-        FROM events WHERE tool = 'ccmr' AND ts >= ? GROUP BY model, peak`).all(since)) {
-        if (!m.model?.startsWith(prefix)) continue;
+        FROM events WHERE tool IN (${ph}) AND ts >= ? GROUP BY model, peak`).all(...tools, since)) {
+        // 必须连字符：OpenRouter 形态的 'deepseek/deepseek-v4-flash-0731' 扣的是
+        // OpenRouter 的钱包，不是 DeepSeek 直连账户，裸前缀会把它误并进来
+        if (!(m.model === prefix || m.model?.startsWith(prefix + '-'))) continue;
         const p = priceOf(m.model, table, rate);
         if (!p) continue;
         spend += ((m.fi / 1e6) * p.inCny + (m.ci / 1e6) * p.cacheCny + (m.oi / 1e6) * p.outCny)
