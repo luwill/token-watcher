@@ -59,6 +59,16 @@ export async function collectXxxFile(store, { tool, path, fileId, offset, state,
   多为父目录名，序号撞上就会互相顶掉；旧结构的键则须保持原样，否则重扫时历史事件会被
   当成新行再插一遍
 
+### sqlite 源：先问这张表会不会原地更新
+
+rowid 水位只对"只追加"的表成立。上游若先插入占位行、完成后再 `UPDATE` 填值（OpenCode 的
+assistant 消息就是如此），扫描一旦落在两次写入之间，占位行被跳过、水位越过它，之后的更新永远
+读不到——同样是退出码 0、只是少数据。服务监听 WAL 写入，恰恰最容易在"写到一半"时扫描。
+
+- 写采集器前先在真实库里比 `time_created` 与 `time_updated`：两者不等的行就是被改过的
+- 会改行的表按 `time_updated` 增量，并留回看窗口兜住多写入方的乱序提交
+- fixture 要覆盖"先扫到占位行、再更新"的两轮扫描，单轮 fixture 抓不到这类问题
+
 ## 其他约定
 
 - 零依赖原则：后端只用 Node 内置模块（`node:sqlite`/`node:http`/`node:fs`）；前端零构建（vanilla JS + ECharts UMD）

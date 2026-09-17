@@ -105,12 +105,20 @@ Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），�
   （实测 session 表的 `tokens_*` 聚合列恰等于各 message 之和，故 message 级不重不漏）；
   user 消息没有 `tokens`，须跳过而不是记成 0 用量事件
 - 工具调用在 `part` 表 `data.type='tool'`（`tool` 为名、`callID` 去重）
-- **rowid 水位在这张表上不够**：`message`/`part` 都是 `ON DELETE CASCADE`，session 还带 `revert`
-  列——删掉最大 rowid 后 SQLite 会把该号让给下一条插入，新消息的 rowid 就可能不大于水位而被
-  静默跳过。故每轮先比 `MAX(rowid)`：表变短即说明删过行，水位退回 0 整表重读（dedup 幂等）。
-  ZCode 的 `model_usage` 只追加，没有这个问题——同为 sqlite 源也不能照抄增量策略
-- 残留边界：若"删行"与"插新行"之间一次扫描都没发生，缩短信号会被错过；这种情况需靠
-  `SOURCES.version` 自增触发一次全量重扫补回
+- **message 按 `time_updated` 水位增量，不能按 rowid**：assistant 消息是"先插后改"——开始生成
+  就插入一行（`tokens` 全 0），生成结束才原地 `UPDATE` 写入用量并刷新 `time_updated`（实测
+  1.18.31，每条消息恰一个 `step-finish`，用量只写这一次）。服务监听 `-wal`，生成过程中的写入
+  本身就会触发扫描，扫描几乎总落在"已插入、未完成"的窗口里：0 用量被跳过、rowid 水位却越过了它，
+  完成后的更新再也读不到。1.4.2 及以前因此漏掉约八成 OpenCode 消息。按 `time_updated` 增量也
+  顺带免疫了下面的 rowid 复用问题。水位每轮回看 60 秒：同库可能有多个写入方（并行子 agent、
+  多开），时间戳较小的行可能晚提交
+- **part 仍按 rowid 水位**：工具块插入时已带 `tool` 名，后续更新不影响采集。但 `part` 随
+  `message` `ON DELETE CASCADE`，session 还带 `revert` 列——删掉最大 rowid 后 SQLite 会把该号
+  让给下一条插入，新行的 rowid 就可能不大于水位而被静默跳过。故每轮先比 `MAX(rowid)`：表变短
+  即说明删过行，水位退回 0 整表重读（dedup 幂等）。残留边界：若"删行"与"插新行"之间一次扫描
+  都没发生，缩短信号会被错过，需靠 `SOURCES.version` 自增触发全量重扫补回
+- ZCode 的 `model_usage` 只追加、不改行，rowid 水位够用——同为 sqlite 源也不能照抄增量策略，
+  先确认那张表会不会删行、会不会原地更新
 
 ## 计价：DeepSeek 的峰谷价
 
@@ -126,7 +134,7 @@ Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），�
 
 ## 关键机制
 
-- **增量三策略**：jsonl 字节游标（只推进到完整行尾，写入中的半行下次重读；UTF-8 跨块安全）/ sqlite rowid 水位 / zst 快照重解析
+- **增量三策略**：jsonl 字节游标（只推进到完整行尾，写入中的半行下次重读；UTF-8 跨块安全）/ sqlite 水位（只追加的表用 rowid，会原地更新的表用 `time_updated`）/ zst 快照重解析
 - **dedup 幂等**：所有事件带全局唯一 dedup_key，重复解析 INSERT OR IGNORE
 - **采集器版本号**：`SOURCES.version` 与 `files.state_json._v` 不符 → 自动全量重扫回填（用于采集逻辑升级，如新增工具调用提取）
 - **常驻进程版本戳**：collector 必须把 `_v` 写进 state，否则常驻服务每轮全量重扫（真实踩坑）
