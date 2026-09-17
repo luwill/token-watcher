@@ -850,9 +850,10 @@ console.log('\n[8] 余额对账的归属');
   st.db.prepare(`INSERT OR REPLACE INTO quota (tool, ts, data) VALUES ('balance:deepseek', ?, ?)`)
     .run(now, JSON.stringify({ provider: 'DeepSeek', balance: 90, currency: 'CNY' }));
 
-  const PEAK = Date.parse('2026-09-16T02:00:00Z'); // 周三峰时，避免谷时折扣干扰
+  // 对账窗口是"最近 N 小时"，必须相对 now 取时刻：写死日期的用例过一天就滑出窗口、自己变红。
+  // 峰谷折扣由定价里显式的 off_peak: 1 关掉，而不是靠挑一个峰时时刻（周末根本没有峰时）。
   const ev = (tool, model, key) => st.insertEvent({
-    ts: PEAK, tool, model, session_id: 's-recon', project: 'projR',
+    ts: now - 30 * 60_000, tool, model, session_id: 's-recon', project: 'projR',
     input_tokens: 1_000_000, cached_input: 0, cache_write: 0, output_tokens: 0,
     reasoning_tokens: 0, total_tokens: 1_000_000, dedup_key: key,
   });
@@ -862,7 +863,7 @@ console.log('\n[8] 余额对账的归属');
   ev('ccmr', 'deepseek/recon-test', 'recon:4');      // 不计：OpenRouter 形态，扣的是 OpenRouter
 
   // 只给测试模型定价，其余模型离线查不到价会被跳过，不干扰本节
-  const pricing = { models: { 'deepseek-recon-test': { currency: 'CNY', input_miss: 2, input_hit: 0, output: 0 } } };
+  const pricing = { models: { 'deepseek-recon-test': { currency: 'CNY', input_miss: 2, input_hit: 0, output: 0, off_peak: 1 } } };
   const r = computeRecon(st.db, st, pricing, { hours: 24, rate: 7 })
     .find(x => x.id === 'deepseek');
   ok('对账覆盖同账户的全部工具（ccmr+dsh=¥4，非仅 ccmr 的 ¥2）',
