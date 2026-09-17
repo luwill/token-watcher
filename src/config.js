@@ -113,7 +113,7 @@ export const SOURCES = [
     roots: opencodeDbPaths(),
     kind: 'sqlite',
     collector: 'opencode',
-    version: 1,
+    version: 2, // v2: message 改按 time_updated 增量（rowid 水位漏掉"先插后改"的消息），重扫补回
   },
 ];
 

@@ -741,6 +741,72 @@ console.log('\n[5] 增量续写');
   db2.close();
 }
 
+/* OpenCode 的 assistant 消息是"先插后改"：开始生成时就插入一行，tokens 全 0；
+ * 生成结束才原地 UPDATE 写入用量并刷新 time_updated（实测 1.18.31，每条消息恰一个 step-finish）。
+ * 服务监听 -wal，生成过程中每次写入都会触发扫描——扫描几乎总落在"已插入、未完成"的窗口里。
+ * 按 rowid 水位增量时，这行被当成 0 用量跳过、水位却越过了它，完成后的 UPDATE 再也读不到。 */
+{
+  const ocDb = join(HOME, '.local/share/opencode', 'opencode.db');
+  const t0 = Date.now();
+  const zero = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  {
+    const o = new DatabaseSync(ocDb);
+    o.prepare(`INSERT INTO message VALUES ('oc-a3', 's-oc', ?, ?, ?)`).run(t0, t0, JSON.stringify({
+      role: 'assistant', modelID: 'Oc-Test-Model', tokens: zero, time: { created: t0 },
+    }));
+    o.close();
+  }
+  ok('生成中途 scan 退出码 0', cli(['scan']).status === 0);
+  {
+    const o = new DatabaseSync(ocDb);
+    o.prepare(`UPDATE message SET time_updated = ?, data = ? WHERE id = 'oc-a3'`).run(t0 + 5000, JSON.stringify({
+      role: 'assistant', modelID: 'Oc-Test-Model',
+      tokens: { total: 456, input: 400, output: 56, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: t0, completed: t0 + 5000 },
+    }));
+    o.close();
+  }
+  ok('生成完成后 scan 退出码 0', cli(['scan']).status === 0);
+  {
+    const db3 = new DatabaseSync(dbFile, { readOnly: true });
+    ok('扫描落在生成中途的消息，完成后仍被采集',
+      db3.prepare("SELECT total_tokens t FROM events WHERE dedup_key = 'opencode:oc-a3'").get()?.t === 456,
+      JSON.stringify(db3.prepare("SELECT dedup_key, total_tokens FROM events WHERE tool='opencode'").all()));
+    db3.close();
+  }
+
+  /* 已升级用户的游标早已越过漏掉的行：只修增量逻辑补不回历史，必须让旧 state 触发全量重扫。
+   * 这里把 files 表还原成旧版本的真实形态（rowid 水位已越过、_v 为旧版本）来验证。 */
+  const t1 = Date.now();
+  {
+    const o = new DatabaseSync(ocDb);
+    o.prepare(`INSERT INTO message VALUES ('oc-a4', 's-oc', ?, ?, ?)`).run(t1, t1 + 3000, JSON.stringify({
+      role: 'assistant', modelID: 'Oc-Test-Model',
+      tokens: { total: 789, input: 700, output: 89, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: t1, completed: t1 + 3000 },
+    }));
+    // 水位恰好等于真实最大 rowid：比它大会触发"表变短即回退"，那就不是真实的中毒形态了
+    const maxMsg = o.prepare('SELECT MAX(rowid) m FROM message').get().m;
+    const maxPart = o.prepare('SELECT MAX(rowid) m FROM part').get().m;
+    o.close();
+    const w = new DatabaseSync(dbFile);
+    w.prepare("UPDATE files SET state_json = ? WHERE tool = 'opencode'")
+      .run(JSON.stringify({ maxRowid: maxMsg, partMaxRowid: maxPart, _v: 1 }));
+    w.close();
+  }
+  ok('旧游标 scan 退出码 0', cli(['scan']).status === 0);
+  {
+    const db4 = new DatabaseSync(dbFile, { readOnly: true });
+    ok('被旧版 rowid 水位越过的消息，升级后补回',
+      db4.prepare("SELECT total_tokens t FROM events WHERE dedup_key = 'opencode:oc-a4'").get()?.t === 789,
+      JSON.stringify(db4.prepare("SELECT dedup_key, total_tokens FROM events WHERE tool='opencode'").all()));
+    // a1（被删但历史保留）+ a2 + a3 + a4
+    ok('全量重扫不重复计数', db4.prepare("SELECT COUNT(*) n FROM events WHERE tool='opencode'").get().n === 4,
+      String(db4.prepare("SELECT COUNT(*) n FROM events WHERE tool='opencode'").get().n));
+    db4.close();
+  }
+}
+
 /* ---------- 第 6 层：DeepSeek 峰谷价 ----------
  * 官方规则（api-docs.deepseek.com/quick_start/pricing，2026-09-16 核对）：
  *   峰时 = UTC 周一至周五 01:00-04:00 与 06:00-10:00；其余一切时段为谷时，谷时价减半。
