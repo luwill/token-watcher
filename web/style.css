@@ -62,6 +62,8 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .q-fill { height: 100%; width: 0%; border-radius: 6px; background: linear-gradient(90deg, #34c98e, #e0b34c, #e0655f); transition: width .6s; }
 .q-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; font-size: 13px; }
 .quota-note { display: flex; align-items: center; font-size: 12px; }
+.q-win + .q-win { margin-top: 10px; }
+.q-win-head { margin: 0 0 6px; }
 
 .heat { margin-bottom: 14px; }
 .heat-modes { float: right; display: inline-flex; gap: 4px; }

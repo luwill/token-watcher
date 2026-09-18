@@ -54,7 +54,13 @@ block3 tool_use   3594/47360/309   ← 唯一带真实输出的一行
 - `token_count.info.total_token_usage` 是**会话累计值**，按相邻事件差分取单次用量；差分 0 的重复通知自然跳过
 - **resume/fork 会话继承父线程累计基线**——若直接对"每文件终值"求和会把同一对话重复计数（实测差 9 倍），差分 + 首事件建基线天然正确
 - 模型名版本漂移：新格式在 `thread_settings_applied.thread_settings.model`，旧格式在 `turn_context.payload.model`；续写文件两者皆无 → 按 `session_meta.parent_thread_id` 继承链回填（dedup 只防重插不更新旧行，需显式 UPDATE）
-- `rate_limits` 为账号级配额快照（used_percent/window/resets_at），只保留全局最新（按 ts，与扫描顺序无关）
+- `rate_limits` 为账号级配额快照，只保留全局最新（按 ts，与扫描顺序无关）。解析在 `src/codexQuota.js`：
+  - **primary / secondary 是位置不是含义**，按 `window_minutes` 认窗口：plus 为 primary=300（5 小时）、
+    secondary=10080（周）；pro / prolite 只有 primary=10080。同一套餐也在两种形态间切换过
+  - 同一条流里混着非主额度的快照：`limit_id=codex_bengalfox`（GPT-5.3-Codex-Spark 的独立额度）、
+    窗口全空的 `premium`。只收 `limit_id` 为 `codex` 或缺失（旧版）的快照，没有窗口的不入库
+  - 升级前存的旧形态（只取了 primary 的平铺字段）由 `codexQuotaView` 在输出时转成窗口列表，
+    不为单条"最新值"全量重扫 rollout
 - 工具调用在 `response_item` 且 `payload.type=function_call`（name/call_id）
 - `codex-auto-review` 是 Codex Desktop 内置自动审查子代理的模型槽位，真实用量
 

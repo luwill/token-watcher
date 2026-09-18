@@ -12,7 +12,7 @@
 |---|---|---|
 | Claude Code | `~/.claude/projects` | 逐请求 token 明细、模型分布 |
 | ccmr（claude-code-model-router） | `~/.claude-gateway/projects` | 同上（国产模型隔离目录，真实模型名） |
-| Codex | `~/.codex/sessions`、`archived_sessions` | token 明细、**官方周配额百分比与重置时间**、模型（含 auto-review 子代理）、工具调用 |
+| Codex | `~/.codex/sessions`、`archived_sessions` | token 明细、**官方配额百分比与重置时间**（5 小时 / 每周窗口）、模型（含 auto-review 子代理）、工具调用 |
 | ZCode | `~/.zcode/cli/db/db.sqlite` | 逐请求明细（model_usage 表）、工具调用 |
 | dsh（DeepSeek Harness） | `~/.dsh/sessions` | 逐请求明细（zstd 压缩会话） |
 | WorkBuddy | `~/.WorkBuddy/projects` | 逐请求明细 + **积分费率自学习**（credit 账本 × token 最小二乘） |
@@ -169,7 +169,20 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 
 ## 更新日志
 
-### 1.4.3（2026-09-17，待发布）
+### 1.4.4（2026-09-18，待发布）
+
+- **修复 Codex plus 用户的配额卡显示成 5 小时额度。** Codex 上报的配额分 primary / secondary
+  两个位置，但位置不代表窗口：plus 套餐 primary 是 5 小时、secondary 才是周额度；pro 只有
+  primary，且是周额度。此前一律取 primary 并标成"周配额"，plus 用户看到的其实是 5 小时额度
+  （卡片上"0 天窗口"就是 300 分钟被当成天数取整的结果）。现在按窗口时长识别，卡片更名为
+  「Codex 配额」，有几个窗口就显示几条：plus 显示 5 小时与每周两条，pro 只显示每周
+- 修复配额被非主额度的快照顶掉：使用 GPT-5.3-Codex-Spark 时 Codex 会上报一份独立额度，
+  另有一种窗口全空的快照，此前只要它们是最新一条，就会让配额卡显示成 Spark 的额度或 0%
+- 升级前存下的旧快照无需重扫即可正确显示；下一次使用 Codex 时自动换成完整的窗口数据
+- 重置倒计时满一天时显示"3天23时58分"，不再显示成"95时58分"
+- 修掉一条会随运行时刻变红的测试：美元折算用例的事件取"1 小时前"，落在 DeepSeek 谷时就被减半
+
+### 1.4.3（2026-09-17）
 
 - **修复 OpenCode 漏采约八成消息。** OpenCode 的 assistant 消息是"先插后改"：开始生成就插入
   一行（用量全 0），生成结束才原地更新写入用量。采集器按 rowid 增量，而服务监听数据库写入、
