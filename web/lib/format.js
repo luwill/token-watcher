@@ -39,3 +39,26 @@ export function ymd(d) {
   const x = d instanceof Date ? d : new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
+
+/**
+ * 配额窗口按时长命名（与 Codex 自己的 /status 一致），不按 primary/secondary 位置：
+ * plus 的 primary 是 5 小时窗口，pro 的 primary 却是周窗口。
+ */
+export function windowLabel(minutes) {
+  const m = Number(minutes) || 0;
+  if (m === 10080) return '每周';
+  if (m > 0 && m % 1440 === 0) return `${m / 1440} 天`;
+  if (m > 0 && m % 60 === 0) return `${m / 60} 小时`;
+  return `${m} 分钟`;
+}
+
+/** 倒计时：满一天带"天"并省去秒（周窗口的重置常在几天后），不满一天精确到秒 */
+export function fmtCountdown(ms) {
+  if (!(ms > 0)) return '已结束';
+  const d = Math.floor(ms / 8.64e7);
+  const h = Math.floor((ms % 8.64e7) / 3.6e6);
+  const m = String(Math.floor((ms % 3.6e6) / 6e4)).padStart(2, '0');
+  if (d > 0) return `${d}天${h}时${m}分`;
+  const sec = String(Math.floor((ms % 6e4) / 1000)).padStart(2, '0');
+  return `${h}时${m}分${sec}秒`;
+}

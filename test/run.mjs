@@ -123,9 +123,21 @@ console.log('\n[2b] 前端纯函数（lib/）');
   const app = read(join(ROOT, 'web/app.js'));
   const lib = (f) => import(pathToFileURL(join(ROOT, 'web/lib', f)).href);
   const { pickSeries, assignSlots, stackTipFormatter, dayAxis, fillDays } = await lib('series.js');
-  const { esc, fmt, fmtShort, ymd } = await lib('format.js');
+  const { esc, fmt, fmtShort, ymd, windowLabel, fmtCountdown } = await lib('format.js');
   const { MODEL_PALETTE, TOOL_COLORS } = await lib('theme.js');
   const { chartTooltip, tooltipPosition } = await lib('tooltip.js');
+
+  // ---- 配额窗口标签：按时长命名，不按 primary/secondary 位置（plus 的 primary 是 5 小时，pro 的是周） ----
+  ok('窗口标签 300 分钟 = 5 小时', windowLabel?.(300) === '5 小时', String(windowLabel?.(300)));
+  ok('窗口标签 10080 分钟 = 每周', windowLabel?.(10080) === '每周', String(windowLabel?.(10080)));
+  ok('窗口标签 1440 分钟 = 1 天', windowLabel?.(1440) === '1 天', String(windowLabel?.(1440)));
+  ok('Codex 配额卡不再写死"周配额"', !app.includes('Codex 周配额'));
+  // 周窗口的重置常在几天后，"95时59分"要心算才知道是四天
+  const H = 3.6e6;
+  ok('倒计时满一天带"天"', fmtCountdown?.(4 * 24 * H - 1000) === '3天23时59分', String(fmtCountdown?.(4 * 24 * H - 1000)));
+  ok('倒计时不满一天保留秒', fmtCountdown?.(3 * H + 57 * 6e4 + 18e3) === '3时57分18秒', String(fmtCountdown?.(3 * H + 57 * 6e4 + 18e3)));
+  ok('倒计时到点显示已结束', fmtCountdown?.(0) === '已结束' && fmtCountdown?.(-5) === '已结束');
+  ok('Codex 配额卡按窗口逐条渲染', /windows/.test(app) && /windowLabel\(/.test(app));
 
   // ---- 转义：面板整页靠 innerHTML 拼接，插值来自本地目录名与各工具 transcript ----
   ok('esc 转义尖括号',
@@ -368,9 +380,19 @@ let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随�
     JSON.stringify({ timestamp: ISO(44000), type: 'event_msg', payload: { type: 'thread_settings_applied', thread_settings: { model: 'gpt-test' } } }),
     JSON.stringify({ timestamp: ISO(43000), type: 'event_msg', payload: { type: 'token_count',
       info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 120 } },
-      rate_limits: { primary: { used_percent: 42, window_minutes: 10080, resets_at: 1799999999 }, plan_type: 'testplan' } } }),
+      // plus 套餐真实形态：primary 是 5 小时窗口，secondary 才是周窗口（pro 只有 primary=周）
+      rate_limits: { limit_id: 'codex', primary: { used_percent: 25, window_minutes: 300, resets_at: 1799990000 },
+        secondary: { used_percent: 42, window_minutes: 10080, resets_at: 1799999999 }, plan_type: 'testplan' } } }),
     JSON.stringify({ timestamp: ISO(30000), type: 'event_msg', payload: { type: 'token_count',
       info: { total_token_usage: { input_tokens: 350, cached_input_tokens: 100, cache_write_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 10, total_tokens: 400 } } } }),
+    // 更晚的两条快照都不是主额度：Spark 模型的独立额度、窗口全空的 premium。累计值不变，不产生事件
+    JSON.stringify({ timestamp: ISO(29000), type: 'event_msg', payload: { type: 'token_count',
+      info: { total_token_usage: { input_tokens: 350, cached_input_tokens: 100, cache_write_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 10, total_tokens: 400 } },
+      rate_limits: { limit_id: 'codex_bengalfox', limit_name: 'GPT-5.3-Codex-Spark',
+        primary: { used_percent: 0, window_minutes: 10080, resets_at: 1799999000 }, secondary: null, plan_type: 'testplan' } } }),
+    JSON.stringify({ timestamp: ISO(28000), type: 'event_msg', payload: { type: 'token_count',
+      info: { total_token_usage: { input_tokens: 350, cached_input_tokens: 100, cache_write_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 10, total_tokens: 400 } },
+      rate_limits: { limit_id: 'premium', primary: null, secondary: null, plan_type: 'testplan' } } }),
   ]);
 
   // Grok：秒级时间戳 + turn_completed（modelUsage 拆分）+ tool_call
@@ -591,7 +613,11 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // Codex 配额快照
   const quota = JSON.parse(db.prepare(`SELECT data FROM quota WHERE tool='codex'`).get()?.data ?? 'null');
-  ok('codex 配额 42%', quota?.used_percent === 42 && quota?.plan_type === 'testplan');
+  const win = (m) => quota?.windows?.find(w => w.window_minutes === m);
+  ok('codex 配额按窗口时长识别：周窗口 42%（plus 的周额度在 secondary）', win(10080)?.used_percent === 42, JSON.stringify(quota));
+  ok('codex 配额同时保留 5 小时窗口 25%', win(300)?.used_percent === 25, JSON.stringify(quota));
+  ok('codex 配额 plan_type 保留', quota?.plan_type === 'testplan', JSON.stringify(quota));
+  ok('Spark 独立额度与 premium 空快照不覆盖主额度', quota?.windows?.length === 2, JSON.stringify(quota));
 
   // project 捕获
   const proj = Object.fromEntries(q('SELECT tool, project FROM events GROUP BY tool').map(r => [r.tool, r.project]));
@@ -937,6 +963,33 @@ console.log('\n[8] 余额对账的归属');
     r && Math.abs(r.spend - 4) < 1e-9, JSON.stringify(r));
   ok('余额差值照常读出（-10）', r && Math.abs(r.delta + 10) < 1e-9, String(r?.delta));
   st.db.close();
+}
+
+/* ---------- 第 8b 层：Codex 配额快照 ----------
+ * rate_limits 的 primary/secondary 是**位置**，不是含义：plus 为 primary=5 小时、secondary=周；
+ * pro/prolite 只有 primary=周（同一套餐也在两种形态间切换过）。只能按 window_minutes 认窗口。
+ * 另有非主额度的快照混在同一条流里：Spark 模型的 codex_bengalfox、窗口全空的 premium。
+ */
+console.log('\n[8b] Codex 配额快照');
+{
+  const { quotaFromRateLimits, codexQuotaView } = await import(pathToFileURL(join(ROOT, 'src/codexQuota.js')).href);
+  const w = (m, u, r = 1) => ({ used_percent: u, window_minutes: m, resets_at: r });
+  const plus = quotaFromRateLimits({ limit_id: 'codex', primary: w(300, 25), secondary: w(10080, 42), plan_type: 'plus' });
+  ok('plus：两个窗口都保留，按时长升序',
+    JSON.stringify(plus?.windows?.map(x => [x.window_minutes, x.used_percent])) === '[[300,25],[10080,42]]', JSON.stringify(plus));
+  const pro = quotaFromRateLimits({ limit_id: 'codex', primary: w(10080, 97), secondary: null, plan_type: 'prolite' });
+  ok('pro：只有周窗口', JSON.stringify(pro?.windows?.map(x => x.window_minutes)) === '[10080]', JSON.stringify(pro));
+  ok('Spark 独立额度不算主额度', quotaFromRateLimits({ limit_id: 'codex_bengalfox', primary: w(10080, 0) }) === null);
+  ok('窗口全空的快照丢弃（否则显示成 0%）', quotaFromRateLimits({ limit_id: 'premium', primary: null, secondary: null }) === null);
+  ok('没有 limit_id 的旧快照照常接受', quotaFromRateLimits({ primary: w(10080, 5) })?.windows?.length === 1);
+
+  // 升级前存下的是旧形态（只有 primary 的平铺字段），不重扫也要能正确显示
+  const legacy = codexQuotaView({ ts: 1, data: { used_percent: 25, window_minutes: 300, resets_at: 9, plan_type: 'plus' } });
+  ok('旧形态快照转成窗口列表', JSON.stringify(legacy?.data?.windows) === '[{"window_minutes":300,"used_percent":25,"resets_at":9}]',
+    JSON.stringify(legacy));
+  ok('旧形态 plan_type 保留', legacy?.data?.plan_type === 'plus');
+  ok('新形态原样返回', codexQuotaView({ ts: 1, data: plus })?.data?.windows?.length === 2);
+  ok('无快照返回 null', codexQuotaView(null) === null);
 }
 
 /* ---------- 第 9 层：LaunchAgent 生成 ----------

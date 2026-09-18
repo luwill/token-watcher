@@ -6,6 +6,7 @@ import { extname, join, resolve, dirname } from 'node:path';
 import { WEB_DIR, ECHARTS_PATH, DB_PATH, isOffline, SOURCES } from './config.js';
 import { learnWorkbuddyRates } from './rates.js';
 import { loadPricing, computeCosts, computeRecon } from './pricing.js';
+import { codexQuotaView } from './codexQuota.js';
 import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
 
@@ -191,7 +192,7 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     by_day_all: dayAllRows,
     by_model: modelRows,
     by_tool: toolRows,
-    quota: { codex: store.getQuota('codex'), claude5h: computeClaude5h(db) },
+    quota: { codex: codexQuotaView(store.getQuota('codex')), claude5h: computeClaude5h(db) },
     balances: store.getBalances(),
     wb_rates: store.getRates(),
     health: computeHealth(db, scannerStats || {}),

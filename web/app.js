@@ -1,7 +1,7 @@
 /* Token Watcher 面板：fetch /api/summary 渲染，SSE 实时刷新。
  * 纯逻辑（格式化/系列选择/配色/悬浮框定位）在 lib/ 下，可被 test/run.mjs 直接 import。
  * ECharts 走全局 UMD（index.html 里的 <script>），不参与模块图。 */
-import { esc, fmt, fmtShort, hhmm, ymd } from './lib/format.js';
+import { esc, fmt, fmtShort, hhmm, ymd, windowLabel, fmtCountdown } from './lib/format.js';
 import {
   TOOL_COLORS, TOOL_LABEL, MODEL_PALETTE, OTHER_COLOR, OTHER_DECAL, HEAT_COLORS, HEAT_EMPTY,
 } from './lib/theme.js';
@@ -109,17 +109,22 @@ function renderStatus(quota, balances, rates, recon, costs) {
   if (!host) return;
   let html = '';
 
-  // Codex 周配额
+  // Codex 配额：plus 有 5 小时 + 周两个窗口，pro 只有周窗口——逐个窗口各画一条
   const q = quota?.codex;
-  if (q) {
+  if (q?.data?.windows?.length) {
     const d = q.data;
+    const rows = d.windows.map((w) => {
+      const used = Number(w.used_percent) || 0;
+      return `<div class="q-win">
+        <div class="q-meta q-win-head"><span><b>${esc(windowLabel(w.window_minutes))}</b> · 已用 ${used.toFixed(1)}%</span>
+          <span class="dim">重置 <b class="cd" data-at="${esc(w.resets_at)}">--</b></span></div>
+        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+      </div>`;
+    }).join('');
     html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">Codex 周配额</span>
-        <span class="q-plan">${esc(d.plan_type)}</span>
-        <span class="q-reset">${d.window_minutes ? (d.window_minutes / 1440).toFixed(0) + ' 天窗口' : ''}</span></div>
-      <div class="q-bar"><div class="q-fill" style="width:${Number(d.used_percent) || 0}%"></div></div>
-      <div class="q-meta"><span>已用 ${(d.used_percent ?? 0).toFixed(1)}%</span>
-        <span class="dim">重置 <b class="cd" data-at="${esc(d.resets_at)}">--</b></span></div>
+      <div class="quota-head"><span class="q-title">Codex 配额</span>
+        <span class="q-plan">${esc(d.plan_type)}</span></div>
+      ${rows}
     </div>`;
   }
 
@@ -282,11 +287,7 @@ function renderHealth(health) {
 setInterval(() => {
   for (const node of document.querySelectorAll('.cd[data-at]')) {
     const at = Number(node.dataset.at);
-    if (!at) { node.textContent = '--'; continue; }
-    const ms = at * 1000 - Date.now();
-    if (ms <= 0) { node.textContent = '已结束'; continue; }
-    const h = Math.floor(ms / 3.6e6), m = Math.floor((ms % 3.6e6) / 6e4), sec = Math.floor((ms % 6e4) / 1000);
-    node.textContent = `${h}时${String(m).padStart(2, '0')}分${String(sec).padStart(2, '0')}秒`;
+    node.textContent = at ? fmtCountdown(at * 1000 - Date.now()) : '--';
   }
 }, 1000);
 

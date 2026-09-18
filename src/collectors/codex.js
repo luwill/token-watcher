@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { readLinesFrom } from './lines.js';
 import { normalizeModel } from '../models.js';
+import { quotaFromRateLimits } from '../codexQuota.js';
 
 /**
  * Codex rollout 采集器（~/.codex/sessions 与 archived_sessions，2.4GB 量级）。
@@ -10,7 +11,7 @@ import { normalizeModel } from '../models.js';
  * - 模型名（版本差异，两种都认）：新格式 thread_settings_applied.thread_settings.model；
  *   旧格式 turn_context.payload.model（2026-09 之前的 rollout）。
  * - 工具调用：response_item 且 payload.type=function_call（name/call_id）。
- * - rate_limits 为账号级配额快照：只保留全局最新一条（按 ts）。
+ * - rate_limits 为账号级配额快照：只保留全局最新一条（按 ts）；窗口识别与过滤见 codexQuota.js。
  * - 增量恢复：state（累计值 + 当前模型 + 项目）持久化在 files.state_json。
  * - OpenAI 口径：input_tokens 已含 cached_input_tokens，total = input + output。
  */
@@ -59,15 +60,8 @@ export async function collectCodexFile(store, { path, fileId, offset, state, ver
       const info = payload.info;
       if (!info?.total_token_usage || !Number.isFinite(ts)) return;
 
-      if (payload.rate_limits) {
-        const rl = payload.rate_limits;
-        store.saveQuota('codex', ts, {
-          used_percent: rl.primary?.used_percent ?? null,
-          window_minutes: rl.primary?.window_minutes ?? null,
-          resets_at: rl.primary?.resets_at ?? null,
-          plan_type: rl.plan_type ?? null,
-        });
-      }
+      const quota = quotaFromRateLimits(payload.rate_limits);
+      if (quota) store.saveQuota('codex', ts, quota);
 
       const t = info.total_token_usage;
       const cur = {
