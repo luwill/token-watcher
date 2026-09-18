@@ -292,7 +292,8 @@ console.log('\n[2c] 后端健壮性');
   rdb.prepare('INSERT INTO balance_history VALUES (?,?,?)').run(t - 7_200_000, 'deepseek', 130);
   rdb.prepare('INSERT INTO balance_history VALUES (?,?,?)').run(t - 60_000, 'deepseek', 127);
   const fakeStore = { getBalances: () => [{ id: 'deepseek', provider: 'DeepSeek', balance: 127 }] };
-  const usdPricing = { models: { 'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20 } } };
+  // 本用例只验美元折算。事件取"1 小时前"，峰谷由运行时刻决定，不显式关掉折扣就会在谷时减半、随机变红
+  const usdPricing = { models: { 'deepseek-v4.1-flash': { currency: 'USD', input_miss: 0.30, input_hit: 0.006, output: 1.20, off_peak: 1 } } };
   // 余额轮询熔断：GLM 端点持续 404，真实日志两天里带着 key 重试了 85 次
   const { BalancePoller } = await mod('src/balance.js');
   const etmp = mkdtempSync(join(tmpdir(), 'tokenmeter-env-'));
