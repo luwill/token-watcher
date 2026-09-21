@@ -165,13 +165,14 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       // .cd 倒计时按 unix 秒解析 data-at；Claude 官方给的是 ISO 字符串，先归一到秒
       const atSec = w.resets_at ? Math.floor(Date.parse(w.resets_at) / 1000) || '' : '';
       return `<div class="q-win">
-        <div class="q-meta q-win-head"><span><b>${esc(label)}</b> · 已用 ${used.toFixed(1)}%</span>
+        <div class="q-meta q-win-head"><span title="已用 ${used.toFixed(1)}%"><b>${esc(label)}</b> ${used.toFixed(1)}%</span>
           <span class="dim">重置 <b class="cd" data-at="${atSec}">--</b></span></div>
         <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
       </div>`;
     };
     const scoped = (cu.weekly_scoped || []).map(s => winRow(`${s.label} 周额度`, s)).join('');
-    html += `<div class="quota-card">
+    // 官方卡最多 3+ 行（5h/每周/scoped），放紧凑网格会把整行撑高，归宽卡网格
+    whtml += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">Claude 配额</span><span class="q-plan cc">官方</span></div>
       ${winRow('5 小时窗口', cu.five_hour)}
       ${winRow('每周窗口', cu.seven_day)}
@@ -246,24 +247,27 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
   const roi = lastSummary?.roi;
   if (roi?.configured && roi.entries.length) {
     const rows = roi.entries.map(e => {
-      const api = e.credits != null && e.api_cny <= 0
+      const apiShort = e.credits != null && e.api_cny <= 0
+        ? `积分 ${e.credits.toFixed(1)}`
+        : `¥${e.api_cny < 0.01 ? e.api_cny.toFixed(4) : e.api_cny.toFixed(2)}`;
+      const apiFull = e.credits != null && e.api_cny <= 0
         ? `积分 ${e.credits.toFixed(1)}`
         : `API 等值 ¥${e.api_cny < 0.01 ? e.api_cny.toFixed(4) : e.api_cny.toFixed(2)}`;
       const badge = e.paid_cny == null ? '<span class="dim">月费未填</span>'
         : e.ratio == null ? '<span class="dim">—</span>'
         : e.ratio >= 1 ? `<b style="color:var(--codex)">×${e.ratio.toFixed(1)} 划算</b>`
         : `<b style="color:#e0b34c">×${e.ratio.toFixed(1)}</b>`;
-      const paid = e.paid_cny == null ? '' : ` / 月费 ¥${e.paid_cny.toFixed(0)}`;
-      return `<div class="q-meta" style="margin-top:4px">
+      const paid = e.paid_cny == null ? '' : ` / ¥${e.paid_cny.toFixed(0)}`;
+      return `<div class="q-meta" style="margin-top:4px" title="${esc(apiFull)}${e.paid_cny != null ? esc(' / 月费 ¥' + e.paid_cny.toFixed(0)) : ' · 月费未填'}">
         <span>${esc(e.name)}</span>
-        <span class="dim">${api}${paid}　${badge}</span>
+        <span class="dim">${apiShort}${paid}　${badge}</span>
       </div>`;
     }).join('');
     whtml += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">订阅 ROI（本月）</span>
         <span class="q-plan cc">假设性口径</span></div>
       ${rows}
-      <div class="recon dim" style="margin-top:4px">API 等值 ≠ 订阅价值：订阅含速率限制，API 可能有折扣价</div>
+      <div class="recon dim" style="margin-top:4px" title="API 等值 ≠ 订阅价值：订阅含速率限制，API 可能有折扣价">订阅限速、API 或有折扣价，非等价换算</div>
     </div>`;
   } else if (roi?.hint) {
     whtml += `<div class="quota-card">

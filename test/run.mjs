@@ -1579,6 +1579,21 @@ console.log('\n[13] Claude 官方配额单元');
     && n?.weekly_scoped?.[0]?.label === 'Opus' && n?.weekly_scoped?.[0]?.used_percent === 3.2,
     JSON.stringify(n));
   ok('结构不认识的响应返回 null（接口改版≠0%）', cu.normalizeUsage({ foo: 1 }) === null && cu.normalizeUsage(null) === null);
+  // 2026-09 新形状：窗口主体 utilization，scoped 周窗在 limits[]（kind=weekly_scoped）
+  const n2 = cu.normalizeUsage({
+    five_hour: { utilization: 43, resets_at: '2026-09-21T16:59:59Z' },
+    seven_day: { utilization: 94, resets_at: '2026-09-22T03:59:59Z' },
+    limits: [
+      { kind: 'session', percent: 43, resets_at: '2026-09-21T17:00:00Z', scope: null },
+      { kind: 'weekly_all', percent: 94, resets_at: '2026-09-22T04:00:00Z', scope: null },
+      { kind: 'weekly_scoped', percent: 96, resets_at: '2026-09-22T03:59:59Z',
+        scope: { model: { display_name: 'Fable' } }, is_active: true },
+    ],
+  });
+  ok('官方配额新形状（utilization + limits[]）归一化',
+    n2?.five_hour?.used_percent === 43 && n2?.seven_day?.used_percent === 94
+    && n2?.weekly_scoped?.[0]?.label === 'Fable' && n2?.weekly_scoped?.[0]?.used_percent === 96,
+    JSON.stringify(n2));
   const t401 = await cu.fetchClaudeUsage('tok', { fetchImpl: () => Promise.resolve({ status: 401 }) }).catch(e => e);
   ok('401 给出可操作的提示（跑一次 claude 刷新登录）', /claude/.test(t401?.message || ''), t401?.message);
   // keychain 读取：macOS 分支用假 exec，凭证不存在时返回 null（未登录是正常态）

@@ -55,8 +55,9 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
    232px 会把最后一张挤到第二行、右侧留下整排空列 */
 .quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .quota-extra:empty { display: none; }
-/* 明细宽卡（花费/ROI/费率）：与紧凑卡分网格，避免行内高度差 140px+ 全变成卡内空白 */
-.quota-wide { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; margin-bottom: 14px; }
+/* 明细宽卡（花费/ROI/费率/Claude 官方配额）：与紧凑卡分网格，避免行内高度差 140px+ 全变成卡内空白。
+   300px 下限：3 卡时各 ~420px，4 卡（Claude 官方在线时）各 ~306px——auto-fit 会折叠空轨道，两种张数都整行铺满 */
+.quota-wide { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .quota-wide:empty { display: none; }
 .quota-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; }
 .quota-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }

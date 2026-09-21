@@ -44,8 +44,9 @@ export function readClaudeOauthToken({
 }
 
 function window(w) {
-  // 窗口对象主体用 used_percent；weekly_scoped 数组元素用的是 percent（上游实测两种命名并存）
-  const pct = Number(w?.used_percent ?? w?.percent);
+  // 窗口对象主体用 used_percent；weekly_scoped 旧形状用 percent、2026-09 新版用
+  // utilization（limits[] 元素同样带 percent）——上游实测三种命名并存
+  const pct = Number(w?.used_percent ?? w?.percent ?? w?.utilization);
   if (!Number.isFinite(pct)) return null;
   return {
     used_percent: Math.max(0, Math.min(100, pct)),
@@ -53,23 +54,36 @@ function window(w) {
   };
 }
 
-/** 归一化 /api/oauth/usage 响应为稳定形状；结构不认识返回 null（接口改版≠0%） */
+/** 归一化 /api/oauth/usage 响应为稳定形状；结构不认识返回 null（接口改版≠0%）。
+ * 2026-09 实测新形状：窗口主体用 utilization，scoped 周窗改在 limits[] 数组
+ * （kind=weekly_scoped，percent + scope.model.display_name + is_active）。 */
 export function normalizeUsage(body) {
   if (!body || typeof body !== 'object') return null;
   const five = window(body.five_hour);
   const seven = window(body.seven_day);
-  const scoped = Array.isArray(body.weekly_scoped)
-    ? body.weekly_scoped.map(e => ({
-        label: e?.scope?.model?.display_name || e?.scope?.model?.id || e?.label || null,
-        ...window(e),
-      })).filter(e => e.label && Number.isFinite(e.used_percent))
-    : [];
-  if (!five && !seven && scoped.length === 0) return null;
+  const scoped = [];
+  // 新形状：limits[] 里的 weekly_scoped 条目（is_active 才是当前生效的约束窗）
+  for (const l of Array.isArray(body.limits) ? body.limits : []) {
+    if (l?.kind !== 'weekly_scoped') continue;
+    scoped.push({
+      label: l?.scope?.model?.display_name || l?.scope?.model?.id || null,
+      ...window(l),
+    });
+  }
+  // 旧形状：顶层 weekly_scoped 数组
+  for (const e of Array.isArray(body.weekly_scoped) ? body.weekly_scoped : []) {
+    scoped.push({
+      label: e?.scope?.model?.display_name || e?.scope?.model?.id || e?.label || null,
+      ...window(e),
+    });
+  }
+  const scopedOk = scoped.filter(e => e.label && Number.isFinite(e.used_percent));
+  if (!five && !seven && scopedOk.length === 0) return null;
   return {
     five_hour: five,
     seven_day: seven,
     seven_day_opus: window(body.seven_day_opus),
-    weekly_scoped: scoped,
+    weekly_scoped: scopedOk,
   };
 }
 
