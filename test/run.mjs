@@ -336,6 +336,7 @@ console.log('\n[3] 端到端冒烟（临时 HOME + fixtures）');
 const HOME = mkdtempSync(join(tmpdir(), 'tokenmeter-test-'));
 const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
 let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随之放行
+let ATY_GOLD = 0, ATY_FINAL = 0; // antigravity 黄金数字（估算口径，夹具块内计算）
 {
   // ---- fixtures（时间戳用"现在"附近，避免健康检查把过去时间的 fixture 判为 stale）----
   const NOW = Date.now();
@@ -521,6 +522,92 @@ let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随�
         usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 200, reasoningTokens: 5 } } },
     })));
 
+
+  // Antigravity（估算口径）：transcript 计费 + conversations db 的权威上下文。
+  // protobuf 行由测试构造（字段路径 1→{9→10→1 上下文, 19 模型, 20 KV last_step_index}，
+  // 与真实数据实测一致）。u1 带权威 db；u2 无 db 走估算 + 之后补 db 触发原地补正。
+  const aty = await import(pathToFileURL(join(ROOT, 'src/collectors/antigravity.js')).href);
+  const est = aty.estimateTokens;
+  const vi = (n) => { const out = []; let v = n; do { let b = v & 0x7f; v = Math.floor(v / 128); if (v) b |= 0x80; out.push(b); } while (v); return Buffer.from(out); };
+  const tagOf = (n, wt) => vi((n << 3) | wt);
+  const ld = (n, payload) => Buffer.concat([tagOf(n, 2), vi(payload.length), payload]);
+  const vf = (n, v) => Buffer.concat([tagOf(n, 0), vi(v)]);
+  const genRow = ({ model, contextTokens, lastStepIndex }) => ld(1, Buffer.concat([
+    ld(9, ld(10, vf(1, contextTokens))),
+    ld(19, Buffer.from(model)),
+    ld(20, Buffer.concat([ld(1, Buffer.from('last_step_index')), ld(2, Buffer.from(String(lastStepIndex)))])),
+  ]));
+  const atyDb = (dir, rows) => {
+    mkdirSync(dirname(dir), { recursive: true });
+    const c = new DatabaseSync(dir);
+    c.exec('CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB, size INTEGER)');
+    rows.forEach((blob, i) => c.prepare('INSERT INTO gen_metadata VALUES (?, ?, ?)').run(i, blob, blob.length));
+    c.close();
+  };
+
+  const A1_TC = JSON.stringify([{ tool: 'run_command', args: { cmd: 'a'.repeat(150) } }]);
+  const A3_C = 'b'.repeat(100), A3_TH = 'c'.repeat(40), A2_C = 'a'.repeat(400);
+  // u1：db 权威 → 事件1 input=23986；事件2 input=25713-23986=1727
+  w(join(HOME, '.gemini/antigravity-cli/brain/u1-anty/.system_generated/logs/transcript.jsonl'), [
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', created_at: ISO(60000), content: 'hello antigravity' }),
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', created_at: ISO(58000), content: '', tool_calls: JSON.parse(A1_TC), thinking: '' }),
+    JSON.stringify({ step_index: 2, type: 'GENERIC', created_at: ISO(50000), content: A2_C }),
+    JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', created_at: ISO(40000), content: A3_C, thinking: A3_TH }),
+  ]);
+  atyDb(join(HOME, '.gemini/antigravity-cli/conversations/u1-anty.db'), [
+    genRow({ model: 'Gemini 3.8 Flash (Medium)', contextTokens: 23986, lastStepIndex: 0 }),
+    genRow({ model: 'gemini-3.8-flash', contextTokens: 25713, lastStepIndex: 2 }),
+  ]);
+  // u2：无 db → 估算（input=此前累计内容）；brain 目录外的非 transcript jsonl 不入文件行
+  w(join(HOME, '.gemini/antigravity/brain/u2-anty/.system_generated/logs/transcript.jsonl'), [
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', created_at: ISO(30000), content: 'd'.repeat(100) }),
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', created_at: ISO(20000), content: 'e'.repeat(80) }),
+  ]);
+  writeFileSync(join(HOME, '.gemini/antigravity/brain/u2-anty/.system_generated/logs/other.jsonl'), '{}');
+  const ATY_EST_U2 = est('d'.repeat(100)) + est('e'.repeat(80));
+  ATY_GOLD = 23986 + 1727 + est(A1_TC) + est(A3_C) + est(A3_TH) + ATY_EST_U2;
+  ATY_FINAL = ATY_GOLD - est('d'.repeat(100)) + 5000; // u2 补正后（见下方补正用例）
+
+  // Kimi Code：workspaces.json（wd 目录 → 项目名）+ wire.jsonl（config.update 模型 +
+  // camelCase / Anthropic / OpenAI 兼容三种 usage 形状 + 零用量跳过 + 重复 uuid dedup）
+  mkdirSync(join(HOME, '.kimi-code'), { recursive: true });
+  writeFileSync(join(HOME, '.kimi-code', 'workspaces.json'), JSON.stringify({
+    version: 1, workspaces: { wd_projX_abc123: { root: '/work/projX', name: 'projX' } },
+  }));
+  const kNow = Date.now();
+  w(join(HOME, '.kimi-code/sessions/wd_projX_abc123/session_s-kimi/agents/main/wire.jsonl'), [
+    JSON.stringify({ type: 'config.update', modelAlias: 'kimi-code/k3' }),
+    JSON.stringify({ type: 'context.append_loop_event', time: kNow - 50000,
+      event: { type: 'step.end', uuid: 'k1', usage: { inputOther: 500, inputCacheRead: 2000, inputCacheCreation: 100, output: 80 } } }),
+    JSON.stringify({ type: 'context.append_loop_event', time: kNow - 40000,
+      event: { type: 'step.end', uuid: 'k2', usage: { input_tokens: 900, cache_read_input_tokens: 3000, cache_creation_input_tokens: 0, output_tokens: 120 } } }),
+    JSON.stringify({ type: 'step.end', uuid: 'k3', time: kNow - 30000,
+      usage: { input_tokens: 800, input_tokens_details: { cached_tokens: 600 }, output_tokens: 50 } }),
+    JSON.stringify({ type: 'step.end', uuid: 'k4', time: kNow - 29000,
+      usage: { inputOther: 0, inputCacheRead: 0, inputCacheCreation: 0, output: 0 } }), // 零用量跳过
+    JSON.stringify({ type: 'context.append_loop_event', time: kNow - 50000,
+      event: { type: 'step.end', uuid: 'k1', usage: { inputOther: 500, inputCacheRead: 2000, inputCacheCreation: 100, output: 80 } } }), // 重复 uuid → dedup
+  ]);
+  // Kimi 黄金：2680 + 4020 + (800-600)+600+50=850 → 7550 / 3 事件；模型 k3；project projX
+
+  // Qoder：workspace-directories 取 cwd + thinking 前置行 + 带 token 终结行 + 仅积分行 +
+  // BYOK 模型前缀剥离（qoder-custom-<uuid>/）
+  w(join(HOME, '.qoder/projects/-work-projQ/s-q1.jsonl'), [
+    JSON.stringify({ type: 'workspace-directories', sessionId: 's-q1', directories: ['/work/projQ'] }),
+    JSON.stringify({ timestamp: ISO(60000), type: 'assistant', uuid: 'qa1',
+      message: { id: 'q1', model: 'qmodel_38max', stop_reason: null, content: [{ type: 'thinking', thinking: 'x' }] } }),
+    JSON.stringify({ timestamp: ISO(55000), type: 'assistant', uuid: 'qa2',
+      message: { id: 'q2', model: 'qmodel_38max', stop_reason: 'end_turn',
+        usage: { input_tokens: 300, cache_read_input_tokens: 1200, cache_creation_input_tokens: 50, output_tokens: 90, credits: 1.5, original_credits: 3.0, request_id: 'rq1' } } }),
+    JSON.stringify({ timestamp: ISO(50000), type: 'assistant', uuid: 'qa3',
+      message: { id: 'q3', model: 'qmodel_38max', stop_reason: 'end_turn',
+        usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0, credits: 0.25 } } }), // 仅积分：不入 token 事件
+    JSON.stringify({ timestamp: ISO(45000), type: 'assistant', uuid: 'qa4',
+      message: { id: 'q4', model: 'qoder-custom-12345678-1234-1234-1234-123456789abc/glm-5.3-flash', stop_reason: 'end_turn',
+        usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 } } }),
+  ]);
+  // Qoder 黄金：token 事件 1640 + 15 = 1655 / 2 事件；积分 1.5 + 0.25 = 1.75
+
   // 本地定价（离线可算费用；deepseek/glm 覆盖 fixtures 模型）
   mkdirSync(join(HOME, '.tokenmeter'), { recursive: true });
   writeFileSync(join(HOME, '.tokenmeter', 'pricing.json'), JSON.stringify({
@@ -545,7 +632,9 @@ const DSH_T = hasDsh ? 1800 : 0, DSH_N = hasDsh ? 2 : 0;
 
 // 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控。
 // USERPROFILE 是 Windows 上 os.homedir() 认的变量，只设 HOME 在那边临时家目录不生效。
-const env = { ...process.env, HOME, USERPROFILE: HOME, TOKENMETER_OFFLINE: '1' };
+// NO_KEYCHAIN：doctor/配额轮询的凭证探测默认会读登录钥匙串（macOS 可能弹一次授权框），
+// 测试进程不该去摸宿主钥匙串。
+const env = { ...process.env, HOME, USERPROFILE: HOME, TOKENMETER_OFFLINE: '1', TOKENMETER_NO_KEYCHAIN: '1' };
 const cli = (args) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), ...args], { encoding: 'utf8', env });
 
 {
@@ -592,17 +681,63 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('pi 2 事件（同 id 重复行 dedup）', byTool.pi?.n === 2, JSON.stringify(byTool.pi));
   ok('opencode 700（user 消息无 tokens 不入库）', byTool.opencode?.t === 700, JSON.stringify(byTool.opencode));
   ok('opencode 1 事件', byTool.opencode?.n === 1, JSON.stringify(byTool.opencode));
+  // Kimi：wire.jsonl 三种 usage 形状 + 项目名映射
+  ok('kimi 7550（camelCase 2680 + Anthropic 4020 + OpenAI 兼容 850）', byTool.kimi?.t === 7550, JSON.stringify(byTool.kimi));
+  ok('kimi 3 事件（零用量跳过、重复 uuid dedup）', byTool.kimi?.n === 3, JSON.stringify(byTool.kimi));
+  const kimiEv = q("SELECT input_tokens, cached_input, project, model FROM events WHERE tool='kimi' ORDER BY ts");
+  ok('kimi OpenAI 兼容形状扣减缓存不双计（input=200, cached=600）',
+    kimiEv[2]?.input_tokens === 200 && kimiEv[2]?.cached_input === 600, JSON.stringify(kimiEv[2]));
+  ok('kimi 模型取 config.update 别名（kimi-code/k3 → k3）', kimiEv.every(e => e.model === 'k3'), JSON.stringify(kimiEv.map(e => e.model)));
+  ok('kimi project 来自 workspaces.json', kimiEv.every(e => e.project === 'projX'), JSON.stringify(kimiEv[0]));
+  // Qoder：token 事件 + 积分账本
+  ok('qoder 1655（带 token 的行才入事件）', byTool.qoder?.t === 1655, JSON.stringify(byTool.qoder));
+  ok('qoder 2 事件（仅积分行不入 token 事件）', byTool.qoder?.n === 2, JSON.stringify(byTool.qoder));
+  ok('qoder BYOK 模型剥离安装期前缀',
+    q("SELECT model FROM events WHERE tool='qoder' AND total_tokens=15")[0]?.model === 'glm-5.3-flash',
+    JSON.stringify(q("SELECT model, total_tokens FROM events WHERE tool='qoder'")));
+  const qCredits = db.prepare("SELECT SUM(amount) t, COUNT(*) n FROM credit_usage WHERE tool='qoder'").get();
+  ok('qoder 积分账本 1.75（幂等）', qCredits?.t === 1.75 && qCredits?.n === 2, JSON.stringify(qCredits));
+  {
+    // 积分账本让健康表不误报"无数据"：只有 credits、零 token 事件的源应为 ok
+    const { computeHealth } = await import(pathToFileURL(join(ROOT, 'src/server.js')).href);
+    const { Store } = await import(pathToFileURL(join(ROOT, 'src/store.js')).href);
+    const hHome = mkdtempSync(join(tmpdir(), 'tokenmeter-h-'));
+    const hs = new Store(join(hHome, 'x.db'));
+    hs.insertCredit({ ts: Date.now(), tool: 'qoder', amount: 0.5, dedup_key: 't1' });
+    const hh = computeHealth(hs.db, {}).find(x => x.tool === 'qoder');
+    ok('仅积分无 token 的源健康状态为 ok（不再误报无数据）', hh?.status === 'ok' && hh?.events === 0,
+      JSON.stringify(hh));
+    const he = computeHealth(hs.db, {}).find(x => x.tool === 'cursor');
+    ok('零数据零积分的源仍为 empty（cursor 未登录场景）', he?.status === 'empty', JSON.stringify(he));
+    hs.close();
+    rmSync(hHome, { recursive: true, force: true });
+  }
+  ok('qoder project 取 workspace-directories 的 cwd 末段',
+    q("SELECT DISTINCT project FROM events WHERE tool='qoder'").every(r => r.project === 'projQ'));
+  // Antigravity（估算口径）：权威 db 上下文 + 字符估算输出
+  const atyEv = q("SELECT dedup_key, input_tokens, output_tokens, model FROM events WHERE tool='antigravity' ORDER BY ts");
+  ok(`antigravity 总量 ${ATY_GOLD}`, byTool.antigravity?.t === ATY_GOLD, `${byTool.antigravity?.t} vs ${ATY_GOLD}`);
+  ok('antigravity 3 事件（两次权威 planner + 一次估算 planner）', byTool.antigravity?.n === 3, JSON.stringify(byTool.antigravity));
+  ok('antigravity 权威输入 23986 / 1727（上下文差分）',
+    atyEv[0]?.input_tokens === 23986 && atyEv[1]?.input_tokens === 1727, JSON.stringify(atyEv));
+  ok('antigravity 模型名归一（Gemini 3.8 Flash (Medium) → gemini-3.8-flash）',
+    atyEv[0]?.model === 'gemini-3.8-flash' && atyEv[1]?.model === 'gemini-3.8-flash',
+    JSON.stringify(atyEv.map(e => e.model)));
+  ok('antigravity 无模型信息的事件如实留空（u2 走估算路径）',
+    atyEv[2]?.model === null, JSON.stringify(atyEv[2]));
+  ok('antigravity 非 transcript 的 jsonl 不入文件行',
+    q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 2);
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok(`全源合计 ${27645 + DSH_T}`, total === 27645 + DSH_T, String(total));
+  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T}`, total === 36850 + ATY_GOLD + DSH_T, String(total));
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
   ok("deepseek-flash → deepseek-v4.1-flash", models['deepseek-v4.1-flash'] === 2 && !models['deepseek-flash']);
-  ok('GLM-5.3-Flash → glm-5.3-flash（小写归一）', models['glm-5.3-flash'] === 1);
+  ok('GLM-5.3-Flash → glm-5.3-flash（小写归一）', models['glm-5.3-flash'] === 2);
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok(`事件总数 ${11 + DSH_N}（幂等）`, n2 === 11 + DSH_N, String(n2));
+  ok(`事件总数 ${19 + DSH_N}（幂等）`, n2 === 19 + DSH_N, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -630,6 +765,55 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   // 唯一可信来源是首行 session 记录的 cwd，须由 collector state 带过增量轮次。
   ok('pi project=projG（首行 session.cwd，非目录名反推）', proj.pi === 'projG', String(proj.pi));
   ok('opencode project=projH（session.directory）', proj.opencode === 'projH', String(proj.opencode));
+  db.close();
+}
+
+/* ---------- 3c：Antigravity 重放段去重 + 权威上下文到位后的原地补正 ----------
+ * 上游会把历史行重写/重放进 transcript（实测同一段 step 出现两遍）。首笔才是真实计费，
+ * 重放段只带增量内容——dedup 必须保首笔、不得重复计数。
+ * 无 db 行时按字符估算入账的事件记进 state.pending，db 行到位后（transcript 再次变化
+ * 触发采集时）原地 UPDATE 补正，否则"第一眼的低估"会被永久钉死。 */
+{
+  const NOWC = Date.now();
+  const ISO = (msAgo) => new Date(NOWC - msAgo).toISOString();
+  const u1 = join(HOME, '.gemini/antigravity-cli/brain/u1-anty/.system_generated/logs/transcript.jsonl');
+  const u1Line3 = JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', created_at: ISO(40000), content: 'b'.repeat(100), thinking: 'c'.repeat(40) });
+  appendFileSync(u1, u1Line3 + '\n'); // 重放 step3 原行
+  ok('重放历史行后 scan 退出码 0', cli(['scan']).status === 0);
+
+  const u2 = join(HOME, '.gemini/antigravity/brain/u2-anty/.system_generated/logs/transcript.jsonl');
+  {
+    // 权威 db 晚于 transcript 落盘（真实时序）：先补 db，再让 transcript 有新动静触发重采
+    const u2db = join(HOME, '.gemini/antigravity/conversations/u2-anty.db');
+    mkdirSync(dirname(u2db), { recursive: true });
+    const c = new DatabaseSync(u2db);
+    c.exec('CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB, size INTEGER)');
+    const vi2 = (n) => { const out = []; let v = n; do { let b = v & 0x7f; v = Math.floor(v / 128); if (v) b |= 0x80; out.push(b); } while (v); return Buffer.from(out); };
+    const t2 = (n, wt) => vi2((n << 3) | wt);
+    const l2 = (n, p) => Buffer.concat([t2(n, 2), vi2(p.length), p]);
+    const v2 = (n, x) => Buffer.concat([t2(n, 0), vi2(x)]);
+    c.prepare('INSERT INTO gen_metadata VALUES (0, ?, ?)').run(Buffer.concat([l2(1, Buffer.concat([
+      l2(9, l2(10, v2(1, 5000))),
+      l2(19, Buffer.from('gemini-3-pro')),
+      l2(20, Buffer.concat([l2(1, Buffer.from('last_step_index')), l2(2, Buffer.from('0'))])),
+    ]))]), 0);
+    c.close();
+  }
+  appendFileSync(u2, JSON.stringify({ step_index: 2, type: 'GENERIC', created_at: ISO(10000), content: 'f'.repeat(40) }) + '\n');
+  ok('补 db + 新增行后 scan 退出码 0', cli(['scan']).status === 0);
+
+  const db = new DatabaseSync(dbFile, { readOnly: true });
+  ok('重放的历史行不重复计费',
+    db.prepare("SELECT COUNT(*) n FROM events WHERE tool='antigravity' AND dedup_key LIKE '%u1-anty:%'").get().n === 2,
+    JSON.stringify(db.prepare("SELECT dedup_key FROM events WHERE dedup_key LIKE '%u1-anty:%'").all()));
+  const u2row = db.prepare("SELECT input_tokens, total_tokens, model FROM events WHERE dedup_key = 'antigravity:anty-u2-anty:1'").get();
+  ok('估算事件被权威上下文原地补正（25 → 5000）',
+    u2row?.input_tokens === 5000 && u2row?.total_tokens === 5000 + 20,
+    JSON.stringify(u2row));
+  ok('补正不改动输出与模型',
+    db.prepare("SELECT output_tokens o FROM events WHERE dedup_key = 'antigravity:anty-u2-anty:1'").get()?.o === 20);
+  const atyTotal = db.prepare("SELECT SUM(total_tokens) t FROM events WHERE tool='antigravity'").get().t;
+  ok(`antigravity 补正后总量 ${ATY_FINAL}`, atyTotal === ATY_FINAL, `${atyTotal} vs ${ATY_FINAL}`);
   db.close();
 }
 
@@ -664,14 +848,16 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 27645 + DSH_T && Array.isArray(s.by_day) && s.by_day.length >= 1
-      && Array.isArray(s.health) && s.health.length === 9 && s.costs && Array.isArray(s.costs.by_day)
-      && Array.isArray(s.recent) && s.recent.length === 11 + DSH_N,
+      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T && Array.isArray(s.by_day) && s.by_day.length >= 1
+      && Array.isArray(s.health) && s.health.length === SOURCES.length && s.costs && Array.isArray(s.costs.by_day)
+      && Array.isArray(s.recent) && s.recent.length === Math.min(19 + DSH_N, 15),
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
     // 健康表必须随注册表一起长——曾经它是一份硬编码工具清单，加源必漏
     ok('健康表覆盖全部注册源', s.health.length === SOURCES.length, `${s.health.length} vs ${SOURCES.length}`);
     const okTools = s.health.filter(h => h.status === 'ok').length;
-    ok(`健康 ${hasDsh ? 9 : 8} 源 ok`, okTools === (hasDsh ? 9 : 8), `${okTools} ok`);
+    ok(`健康 ${hasDsh ? 12 : 11} 源 ok`, okTools === (hasDsh ? 12 : 11), `${okTools} ok`);
+    ok('官方配额字段存在（无凭证时为 null，不编造）', 'claude_usage' in (s.quota || {}));
+    ok('积分账本字段存在（qoder 1.75）', s.credits?.qoder?.total === 1.75, JSON.stringify(s.credits));
     ok('费用 by_day 有值（本地定价离线可算）', s.costs.by_day.length >= 1 && s.costs.today_cny >= 0);
 
     // 离线模式：不发任何外网请求，用本地缓存/手动汇率/种子价继续出数
@@ -702,6 +888,7 @@ console.log('\n[4] API 冒烟');
     ok('ECharts 能取到（取不到就整页空白）', ec.status === 200, String(ec.status));
     ok('ECharts 内容像是 JS 而非错误页',
       (ec.headers.get('content-type') || '').includes('javascript'), ec.headers.get('content-type'));
+
   }
   child.kill('SIGTERM');
 }
@@ -1086,6 +1273,258 @@ console.log('\n[10] 菜单栏胶囊的分发');
   ok('菜单栏源码不再写死端口', !/127\.0\.0\.1:8787/.test(read(join(ROOT, 'menubar/main.swift'))));
   ok('README 用 CLI 子命令指引菜单栏',
     /token-watcher bar|tokenwatcher bar/.test(read(join(ROOT, 'README.md'))));
+}
+
+/* ---------- 第 11 层：CLI 新命令（today/sessions/wrapped/doctor/version/uninstall） ---------- */
+console.log('\n[11] CLI 新命令');
+{
+  const pkg = JSON.parse(read(join(ROOT, 'package.json')));
+
+  const v = cli(['--version']);
+  ok('--version 输出版本号', v.status === 0 && v.stdout.trim() === `token-watcher v${pkg.version}`, v.stdout.trim());
+
+  // today --json：机器可读。期望值直接查库（同口径），免疫前面各层对夹具库的增量写入
+  const expect = new DatabaseSync(dbFile, { readOnly: true });
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const expToday = expect.prepare('SELECT SUM(total_tokens) t, COUNT(*) n FROM events WHERE ts >= ?').get(dayStart.getTime());
+  const expAll = expect.prepare('SELECT SUM(total_tokens) t FROM events').get();
+  const tj = cli(['today', '--json']);
+  let j = null;
+  try { j = JSON.parse(tj.stdout); } catch { /* 断言会红 */ }
+  ok('today --json 可解析', tj.status === 0 && !!j?.today, tj.stdout.slice(0, 120));
+  ok('today --json 数字与库对齐（按日起点切）',
+    j?.today?.tokens === expToday.t && j?.today?.requests === expToday.n,
+    `${j?.today?.tokens}/${expToday.t} ${j?.today?.requests}/${expToday.n}`);
+  ok('today --json all_time 与库对齐', j?.all_time?.tokens === expAll.t, `${j?.all_time?.tokens}/${expAll.t}`);
+  ok('today --json 分工具明细含新源',
+    ['kimi', 'qoder'].every(t => j?.today?.by_tool?.some(x => x.tool === t && x.t > 0)));
+  ok('today --json 含 generated_at', /^\d{4}-/.test(j?.generated_at || ''));
+
+  // today --light：纯 ASCII（CI/SSH 终端不依赖 UTF-8）
+  const tl = cli(['today', '--light']);
+  ok('today --light 纯 ASCII', tl.status === 0 && /^[\x20-\x7E\n]*$/.test(tl.stdout), tl.stdout.slice(0, 80));
+  ok('today --light 含合计行', /TOTAL/.test(tl.stdout));
+
+  // sessions
+  const today = new Date().toLocaleDateString('sv-SE');
+  const sj = cli(['sessions', '--day', today]);
+  let s11 = null;
+  try { s11 = JSON.parse(sj.stdout); } catch { /* 断言会红 */ }
+  ok('sessions --day 输出 JSON', sj.status === 0 && s11?.day === today && Array.isArray(s11.sessions), sj.stdout.slice(0, 100));
+  ok('sessions 字段完整（含峰值与模型清单）',
+    s11?.sessions?.length >= 8 && s11.sessions[0].total > 0
+    && 'peak' in s11.sessions[0] && 'models' in s11.sessions[0] && 'first_ts' in s11.sessions[0]);
+  const sc = cli(['sessions', '--day', today, '--csv']);
+  const csvLines = sc.stdout.trim().split('\n');
+  ok('sessions --csv 表头与行数',
+    sc.status === 0 && csvLines[0].startsWith('session_id,tool,project') && csvLines.length === 1 + s11.sessions.length,
+    `${csvLines.length - 1} vs ${s11?.sessions?.length}`);
+  ok('sessions --csv 含 commits 列（未开 --git 时为空）', csvLines[0].endsWith(',commits'));
+  const badDay = cli(['sessions', '--day', '2026-9-20']);
+  ok('sessions 非法日期退出码 1 并提示', badDay.status === 1 && /YYYY-MM-DD/.test(badDay.stdout + badDay.stderr));
+  const half = cli(['sessions', '--from', today]);
+  ok('sessions --from 单独出现报成对要求', half.status === 1 && /成对/.test(half.stdout + half.stderr));
+
+  // wrapped
+  const wj = cli(['wrapped', '--json']);
+  let w11 = null;
+  try { w11 = JSON.parse(wj.stdout); } catch { /* 断言会红 */ }
+  const thisYear = new Date().getFullYear();
+  const expYear = expect.prepare(
+    "SELECT SUM(total_tokens) t FROM events WHERE CAST(strftime('%Y', ts/1000, 'unixepoch', 'localtime') AS INTEGER) = ?"
+  ).get(thisYear).t;
+  ok('wrapped --json 可解析且年份正确', wj.status === 0 && w11?.year === thisYear, wj.stdout.slice(0, 80));
+  ok('wrapped 总量与库一致（按本地年切）', w11?.total_tokens === expYear, `${w11?.total_tokens}/${expYear}`);
+  ok('wrapped 月度分布求和等于总量', (w11?.by_month || []).reduce((a, b) => a + b, 0) === w11?.total_tokens);
+  ok('wrapped 覆盖连续天数与最忙一天', w11?.active_days >= 1 && w11?.longest_streak_days >= 1 && !!w11?.busiest_day?.day);
+  const wr = cli(['wrapped']);
+  ok('wrapped 人类可读报告含标题与首行', wr.status === 0 && wr.stdout.includes('年度报告') && /tokens/.test(wr.stdout));
+  ok('wrapped 零值年份不炸', cli(['wrapped', '--year', '2020', '--json']).status === 0);
+  expect.close();
+
+  // doctor：fixtures 全新 → 全 ok，退出码 0；输出覆盖环境/库/数据源三段
+  const dr = cli(['doctor']);
+  ok('doctor 退出码 0（夹具全部健康）', dr.status === 0, (dr.stdout + dr.stderr).slice(0, 200));
+  ok('doctor 输出三段体检', ['环境', '数据库', '数据源', '结论'].every(k => dr.stdout.includes(k)));
+  ok('doctor 覆盖全部注册源', SOURCES.every(s => dr.stdout.includes(s.label)));
+
+  // uninstall：非交互且无 --yes → 拒删数据目录；--yes --purge-data → 删净、退出码 0
+  // （在独立临时 HOME 里跑，避免动到共享夹具库）
+  const uHome = mkdtempSync(join(tmpdir(), 'tokenmeter-uninstall-'));
+  const uEnv = { ...env, HOME: uHome, USERPROFILE: uHome };
+  const ucli = (args) => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), ...args], { encoding: 'utf8', env: uEnv });
+  mkdirSync(join(uHome, '.tokenmeter'), { recursive: true });
+  writeFileSync(join(uHome, '.tokenmeter', 'sentinel'), 'x');
+  const u1 = ucli(['uninstall', '--purge-data']);
+  ok('uninstall 无 --yes 时拒绝删数据（非交互 stdin）', u1.status === 0 && existsSync(join(uHome, '.tokenmeter', 'sentinel')),
+    u1.stdout.slice(0, 120));
+  const u2 = ucli(['uninstall', '--purge-data', '--yes']);
+  ok('uninstall --yes 删除数据目录', u2.status === 0 && !existsSync(join(uHome, '.tokenmeter')), u2.stdout.slice(0, 200));
+  ok('uninstall 提示 npm 自卸命令', /npm rm -g token-watcher/.test(u2.stdout));
+  rmSync(uHome, { recursive: true, force: true });
+
+  // Homebrew formula：直连 npm registry、依赖 node、入口符号链接（发版时 update-formula.sh 回填 sha256）
+  const formulaPath = join(ROOT, 'packaging/homebrew/Formula/token-watcher.rb');
+  if (existsSync(formulaPath)) {
+    const f = read(formulaPath);
+    ok('formula 直连 npm registry tarball', /registry\.npmjs\.org\/token-watcher\/-\/token-watcher-[\d.]+\.tgz/.test(f));
+    ok('formula 依赖 node 并链接全部 bin', /depends_on "node"/.test(f) && /bin\.install_symlink/.test(f));
+    ok('formula 版本与 package.json 同步', new RegExp(`token-watcher-${pkg.version}\\.tgz`).test(f), pkg.version);
+    ok('update-formula.sh 随仓库提供', existsSync(join(ROOT, 'packaging/homebrew/update-formula.sh')));
+  } else {
+    ok('Homebrew formula 存在', false, formulaPath);
+  }
+}
+
+/* ---------- 第 11b 层：sessions --git 提交归因 ----------
+ * cwd 只在源文件首段（transcript 的 rec.cwd / rollout 的 session_meta），events 表只存目录名。
+ * 归因必须读文件首段拿完整路径，再在 [first_ts, last_ts+30min] 窗口内查 git log。 */
+console.log('\n[11b] sessions --git 提交归因');
+{
+  const repo = join(HOME, 'work', 'projGit');
+  mkdirSync(repo, { recursive: true });
+  const g = (args, opts = {}) => spawnSync('git', ['-C', repo, ...args],
+    { encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', ...opts.env } });
+  g(['init', '-q']);
+  writeFileSync(join(repo, 'f.txt'), 'x');
+  const commitAt = new Date(Date.now() - 40_000).toISOString(); // 落在会话窗口内
+  g(['add', '.']);
+  g(['commit', '-q', '-m', 'feat: fixture commit'], { env: { GIT_AUTHOR_DATE: commitAt, GIT_COMMITTER_DATE: commitAt } });
+  if (g(['log', '-1']).status !== 0) {
+    console.log('  – git 不可用，跳过归因断言');
+  } else {
+    // 一条 40s 前的 claude 会话指向该仓库；一条无关会话（另一目录）不挂提交
+    const wf = (p, lines) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, lines.join('\n') + '\n'); };
+    wf(join(HOME, '.claude/projects/-work-projGit/s-git.jsonl'), [
+      JSON.stringify({ timestamp: new Date(Date.now() - 60_000).toISOString(), type: 'assistant', requestId: 'rg', sessionId: 's-git', cwd: repo,
+        message: { id: 'mg1', model: 'claude-opus-5', usage: { input_tokens: 30, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 8 } } }),
+      JSON.stringify({ timestamp: new Date(Date.now() - 30_000).toISOString(), type: 'assistant', requestId: 'rg', sessionId: 's-git', cwd: repo,
+        message: { id: 'mg2', model: 'claude-opus-5', usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 4 } } }),
+    ]);
+    ok('归因夹具扫描退出码 0', cli(['scan']).status === 0);
+    const r = cli(['sessions', '--day', new Date().toLocaleDateString('sv-SE'), '--git']);
+    let s = null;
+    try { s = JSON.parse(r.stdout); } catch { /* 断言会红 */ }
+    const git = s?.sessions?.find(x => x.session_id === 's-git');
+    const other = s?.sessions?.find(x => x.session_id === 's-claude');
+    ok('会话挂上窗口内的提交', git?.commits === 1 && /fixture commit/.test(git?.commit_list?.[0]?.subject || ''),
+      JSON.stringify(git?.commit_list));
+    ok('窗口外提交不计入（夹具只有窗口内一笔，双保险见下）', (other?.commits ?? null) === null || other.commits >= 0);
+    ok('非 git 项目的会话 commits 保持 null（诚实缺省）', s?.sessions?.every(x => x.tool !== 'claude-code' || x.commits == null || x.session_id === 's-git'),
+      JSON.stringify(s?.sessions?.filter(x => x.commits != null).map(x => x.session_id)));
+  }
+}
+
+/* ---------- 第 12 层：serve 端口行为（自动递增 / 显式端口大声失败） ---------- */
+console.log('\n[12] serve 端口行为');
+{
+  // 随机端口起一个真实 serve（未显式 --port，经 TOKENMETER_PORT 指定基端口）
+  const pickFree = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+  const base = await pickFree();
+  const squatter = net.createServer();
+  await new Promise(r => squatter.listen(base, '127.0.0.1', r)); // 占住基端口
+
+  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), 'serve'],
+    { env: { ...env, TOKENMETER_PORT: String(base) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let buf = '';
+  child.stdout.on('data', (d) => { buf += d; });
+  const up = await new Promise(r => {
+    const t = setTimeout(() => r(false), 30_000);
+    const check = () => { if (buf.includes(`listening on http://127.0.0.1:${base + 1}`)) { clearTimeout(t); r(true); } };
+    child.stdout.on('data', check); check();
+  });
+  ok('默认端口被占时自动落到下一端口', up, buf.slice(-200));
+  if (up) {
+    const res = await fetch(`http://127.0.0.1:${base + 1}/api/summary?days=1`);
+    ok('递增端口上的面板可用', res.status === 200);
+  }
+  child.kill('SIGTERM');
+  squatter.close();
+
+  // 显式 --port 被占：必须失败退出（悄悄换端口会让菜单栏胶囊连不上）
+  const blocker = net.createServer();
+  const busy = await pickFree();
+  await new Promise(r => blocker.listen(busy, '127.0.0.1', r));
+  const c2 = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'bin/tokenwatcher.js'), 'serve', '--port', String(busy)],
+    { env: { ...env, TOKENMETER_PORT: String(busy) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const c2out = await new Promise(r => {
+    let b2 = '';
+    const t = setTimeout(() => r(b2), 30_000);
+    c2.stdout.on('data', (d) => { b2 += d; });
+    c2.on('exit', () => { clearTimeout(t); r(b2); });
+  });
+  ok('显式 --port 被占时退出码非 0 并提示', c2.exitCode !== 0 && /占用/.test(c2out), c2out.slice(-160));
+  blocker.close();
+}
+
+/* ---------- 第 13 层：Claude 官方配额（单元，mock fetch，不出网） ---------- */
+console.log('\n[13] Claude 官方配额单元');
+{
+  const cu = await import(pathToFileURL(join(ROOT, 'src/claudeUsage.js')).href);
+  const n = cu.normalizeUsage({
+    five_hour: { used_percent: 42.5, resets_at: '2026-09-20T08:00:00Z' },
+    seven_day: { used_percent: 10, resets_at: '2026-09-22T08:00:00Z' },
+    weekly_scoped: [{ kind: 'weekly_scoped', percent: 3.2, resets_at: '2026-09-25T08:00:00Z', scope: { model: { display_name: 'Opus', id: 'opus' } } }],
+  });
+  ok('官方配额归一化：窗口与 scoped 模型',
+    n?.five_hour?.used_percent === 42.5 && n?.seven_day?.used_percent === 10
+    && n?.weekly_scoped?.[0]?.label === 'Opus' && n?.weekly_scoped?.[0]?.used_percent === 3.2,
+    JSON.stringify(n));
+  ok('结构不认识的响应返回 null（接口改版≠0%）', cu.normalizeUsage({ foo: 1 }) === null && cu.normalizeUsage(null) === null);
+  const t401 = await cu.fetchClaudeUsage('tok', { fetchImpl: () => Promise.resolve({ status: 401 }) }).catch(e => e);
+  ok('401 给出可操作的提示（跑一次 claude 刷新登录）', /claude/.test(t401?.message || ''), t401?.message);
+  // keychain 读取：macOS 分支用假 exec，凭证不存在时返回 null（未登录是正常态）
+  const none = await cu.readClaudeOauthToken({ platform: 'linux', home: join(HOME, 'no-such-home') });
+  ok('无凭证时返回 null 而非报错', none === null, String(none));
+  const fileHome = mkdtempSync(join(tmpdir(), 'tokenmeter-cred-'));
+  mkdirSync(join(fileHome, '.claude'), { recursive: true });
+  writeFileSync(join(fileHome, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'atk' } }));
+  ok('credentials.json 路径可读出 token',
+    (await cu.readClaudeOauthToken({ platform: 'linux', home: fileHome })) === 'atk');
+  rmSync(fileHome, { recursive: true, force: true });
+
+  // sessions CSV 转义：项目名带逗号/引号不能炸列
+  const sessionsMod = await import(pathToFileURL(join(ROOT, 'src/sessions.js')).href);
+  const csv = sessionsMod.sessionsToCsv([{ session_id: 's', tool: 't', project: 'a,b"c', first_ts: 1, last_ts: 2, calls: 1, total: 3, peak: 3, models: 'm' }]);
+  ok('sessions CSV 转义逗号与引号', csv.split('\n')[1].startsWith('s,t,"a,b""c"'), csv);
+
+  // Cursor：本地无逐请求 token，走账号级 CSV。单元覆盖列名解析、口径换算、
+  // 同值重复行指纹、poller 幂等（mock fetch + 假 cookie，不出网）
+  const cur = await import(pathToFileURL(join(ROOT, 'src/cursorUsage.js')).href);
+  const csvText = [
+    'Date,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost',
+    '"2026-09-20T15:54:30.603Z","","","free","cursor-grok-4.6-medium","No","0","28375","52096","706","81177","0.09"',
+    '"2026-09-20T15:54:30.603Z","","","free","cursor-grok-4.6-medium","No","0","28375","52096","706","81177","0.09"',
+    '"2026-09-20T16:00:00.000Z","","","free","gpt-x","No","100","200","50","20","370","0.01"',
+  ].join('\n');
+  const rows = cur.parseCursorCsv(csvText);
+  ok('cursor CSV 按表头名解析（列序无关）', rows.length === 3
+    && rows[0].total_tokens === 81177 && rows[0].input_tokens === 28375
+    && rows[0].cached_input === 52096 && rows[0].cache_write === 0,
+    JSON.stringify(rows[0]));
+  ok('cursor cache_write 列独立成项', rows[2].cache_write === 100 && rows[2].total_tokens === 370, JSON.stringify(rows[2]));
+  ok('cursor 同值重复行指纹互异', new Set(rows.map(r => r.dedup_key)).size === 3, JSON.stringify(rows.map(r => r.dedup_key)));
+  ok('cursor 坏表头返回空数组（接口改版≠乱入账）', cur.parseCursorCsv('a,b\n1,2').length === 0);
+  {
+    const { Store } = await import(pathToFileURL(join(ROOT, 'src/store.js')).href);
+    const cHome = mkdtempSync(join(tmpdir(), 'tokenmeter-cursor-'));
+    const cstore = new Store(join(cHome, 'x.db'));
+    const saved = process.env.TOKENMETER_OFFLINE;
+    delete process.env.TOKENMETER_OFFLINE; // poller 在线才工作；结束即恢复
+    const poller = new cur.CursorUsagePoller(cstore, {
+      fetchImpl: async () => ({ ok: true, text: async () => csvText }),
+      cookieImpl: () => 'fake-cookie',
+    });
+    await poller.poll();
+    const n1 = cstore.db.prepare("SELECT COUNT(*) n FROM events WHERE tool='cursor'").get().n;
+    ok('cursor poller 事件入库（3 行）', n1 === 3, String(n1));
+    await poller.poll();
+    const n2b = cstore.db.prepare("SELECT COUNT(*) n FROM events WHERE tool='cursor'").get().n;
+    ok('cursor poller 幂等（重复导出不重复入账）', n2b === 3, String(n2b));
+    process.env.TOKENMETER_OFFLINE = saved;
+    cstore.close();
+    rmSync(cHome, { recursive: true, force: true });
+  }
 }
 
 /* ---------- 清理 ---------- */

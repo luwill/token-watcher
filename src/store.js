@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS balance_history (
   provider TEXT NOT NULL,
   balance REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS credit_usage (
+  ts INTEGER NOT NULL,
+  tool TEXT NOT NULL,                     -- qoder 等以积分为计费单位的源
+  amount REAL NOT NULL,
+  dedup_key TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_credit_ts ON credit_usage(ts);
 CREATE TABLE IF NOT EXISTS tool_calls (
   ts INTEGER NOT NULL,
   tool TEXT NOT NULL,                     -- claude-code | ccmr | zcode
@@ -119,6 +126,8 @@ export class Store {
     this._insertToolCall = this.db.prepare(`
       INSERT OR IGNORE INTO tool_calls (ts, tool, name, session_id, dedup_key)
       VALUES (?, ?, ?, ?, ?)`);
+    this._insertCredit = this.db.prepare(
+      'INSERT OR IGNORE INTO credit_usage (ts, tool, amount, dedup_key) VALUES (?, ?, ?, ?)');
     this._getFile = this.db.prepare('SELECT * FROM files WHERE path = ?');
     this._upsertFile = this.db.prepare(`
       INSERT INTO files (path, tool, session_id, size, mtime_ms, offset, state_json, last_scan_ms)
@@ -188,6 +197,26 @@ export class Store {
 
   insertToolCall(e) {
     return this._insertToolCall.run(e.ts, e.tool, e.name, e.session_id ?? null, e.dedup_key).changes;
+  }
+
+  /** 积分账本（Qoder 等源）：幂等入账，返回是否为新行 */
+  insertCredit(e) {
+    return this._insertCredit.run(e.ts, e.tool, e.amount, e.dedup_key).changes === 1;
+  }
+
+  /** 各积分源的今日/累计消耗 */
+  creditSummary() {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const out = {};
+    for (const r of this.db.prepare(
+      'SELECT tool, SUM(amount) total FROM credit_usage GROUP BY tool').all()) {
+      out[r.tool] = { total: r.total || 0, today: 0 };
+    }
+    for (const r of this.db.prepare(
+      'SELECT tool, SUM(amount) t FROM credit_usage WHERE ts >= ? GROUP BY tool').all(dayStart.getTime())) {
+      if (out[r.tool]) out[r.tool].today = r.t || 0;
+    }
+    return out;
   }
 
   countEvents() {

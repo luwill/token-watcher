@@ -3,16 +3,20 @@
 // pi/opencode 两色不是随手挑的：在深色底上算过与既有七色的 CIEDE2000（含红盲/绿盲模拟），
 // 取的是「加入后全集最差配对仍是原有的 ccmr/dsh（绿色盲 ΔE 5.8）」的那一组——
 // 即新色没有制造出比现状更差的短板。换色请重跑同样的度量。
+// antigravity(#6d6875)/kimi(#95d5b2)/qoder(#9c6644)/cursor(#f2cc8f) 同法逐一过检：
+// 各向最差配对 ΔE 分别 ≥14.8 / ≥7.5 / ≥10.4 / ≥8.8（cursor vs zcode 为最差对）。
 export const TOOL_COLORS = {
   'claude-code': '#e07a5f', 'ccmr': '#8b7cf6', 'codex': '#34c98e',
   'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
   'pi': '#2dd4bf', 'opencode': '#ff8c42',
+  'antigravity': '#6d6875', 'kimi': '#95d5b2', 'qoder': '#9c6644', 'cursor': '#f2cc8f',
 };
 
 export const TOOL_LABEL = {
   'claude-code': 'Claude Code', 'ccmr': 'ccmr', 'codex': 'Codex',
   'zcode': 'ZCode', 'dsh': 'dsh', 'workbuddy': 'WorkBuddy', 'grok': 'Grok',
   'pi': 'Pi', 'opencode': 'OpenCode',
+  'antigravity': 'Antigravity ≈', 'kimi': 'Kimi Code', 'qoder': 'Qoder', 'cursor': 'Cursor',
 };
 
 // 深色底 #14141c 上经 validate_palette.js 校验的 8 槽分类色板：

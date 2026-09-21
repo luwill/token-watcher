@@ -7,6 +7,8 @@ import { WEB_DIR, ECHARTS_PATH, DB_PATH, isOffline, SOURCES } from './config.js'
 import { learnWorkbuddyRates } from './rates.js';
 import { loadPricing, computeCosts, computeRecon } from './pricing.js';
 import { codexQuotaView } from './codexQuota.js';
+import { claudeUsageView, ClaudeUsagePoller } from './claudeUsage.js';
+import { CursorUsagePoller } from './cursorUsage.js';
 import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
 
@@ -87,8 +89,9 @@ function computeClaude5h(db, now = Date.now()) {
  * - stale：数据文件最近 30 分钟内在写入，但 30 分钟内没有解析出新事件（静默失败信号）
  * - empty：从未采集到事件
  * - ok：其余（含"只是没在用"——不误报）
+ * doctor 命令复用同一份逻辑（导出），两处口径必须一致。
  */
-function computeHealth(db, scannerStats) {
+export function computeHealth(db, scannerStats) {
   // 从注册表推导，不再另抄一份：手抄的清单在新增数据源时必漏，
   // 漏掉的源不会报错，只是从健康自检里静默消失——正是这类检查最不该有的失效方式。
   const tools = SOURCES.map(s => s.tool);
@@ -96,19 +99,24 @@ function computeHealth(db, scannerStats) {
   return tools.map(tool => {
     const ev = db.prepare(
       'SELECT COUNT(*) n, MAX(ts) last_ts FROM events WHERE tool = ?').get(tool);
+    // 积分账本也算"有数据"（Qoder 等源本地只报积分不报 token——卡在积分卡上，健康不该误报"无数据"）
+    const cr = db.prepare(
+      'SELECT COUNT(*) n, MAX(ts) last_ts FROM credit_usage WHERE tool = ?').get(tool);
+    const dataRows = ev.n + cr.n;
+    const lastTs = Math.max(ev.last_ts ?? 0, cr.last_ts ?? 0) || null;
     const f = db.prepare(
       'SELECT COUNT(*) n, MAX(mtime_ms) max_mtime FROM files WHERE tool = ?').get(tool);
     const st = scannerStats[tool] || {};
     let status = 'ok';
-    if (!ev.n) status = 'empty';
+    if (!dataRows) status = 'empty';
     else if ((st.parse_errors || 0) > 0) status = 'error';
-    else if (f.max_mtime && ev.last_ts &&
+    else if (f.max_mtime && lastTs &&
              f.max_mtime > now - 30 * 60_000 &&
-             f.max_mtime - ev.last_ts > 30 * 60_000) status = 'stale';
+             f.max_mtime - lastTs > 30 * 60_000) status = 'stale';
     return {
       tool, status,
       events: ev.n,
-      last_event_ts: ev.last_ts,
+      last_event_ts: lastTs,
       files: f.n,
       last_file_mtime: f.max_mtime,
       parse_errors: st.parse_errors || 0,
@@ -192,8 +200,13 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     by_day_all: dayAllRows,
     by_model: modelRows,
     by_tool: toolRows,
-    quota: { codex: codexQuotaView(store.getQuota('codex')), claude5h: computeClaude5h(db) },
+    quota: {
+      codex: codexQuotaView(store.getQuota('codex')),
+      claude5h: computeClaude5h(db),
+      claude_usage: claudeUsageView(store), // 官方窗口（有凭证时）；null → 前端回落 5h 推算
+    },
     balances: store.getBalances(),
+    credits: store.creditSummary(), // 以积分为计费单位的源（Qoder 等）：今日/累计
     wb_rates: store.getRates(),
     health: computeHealth(db, scannerStats || {}),
     balance_status: balanceStatus,
@@ -273,7 +286,7 @@ function scheduleBackup(store, log = () => {}) {
   setInterval(run, 24 * 3600_000).unref?.();
 }
 
-export function startServer({ store, scanner, balancePoller, port, log = () => {} }) {
+export function startServer({ store, scanner, balancePoller, claudePoller, cursorPoller, port, log = () => {} }) {
   const clients = new Set();
   const notify = () => { for (const res of clients) res.write(`data: {"type":"update"}\n\n`); };
   scanner.on('update', notify);
@@ -284,6 +297,23 @@ export function startServer({ store, scanner, balancePoller, port, log = () => {
   if (balancePoller) {
     balancePoller.onChange = notify;
     balancePoller.start();
+  }
+  if (claudePoller) {
+    claudePoller.onChange = notify;
+    claudePoller.start();
+  } else {
+    // 兜底：直接调用方（测试/自定义 server）没传 poller 时不至于完全没有官方配额
+    claudePoller = new ClaudeUsagePoller(store, { log });
+    claudePoller.onChange = notify;
+    claudePoller.start();
+  }
+  if (cursorPoller) {
+    cursorPoller.onChange = notify;
+    cursorPoller.start();
+  } else {
+    cursorPoller = new CursorUsagePoller(store, { log });
+    cursorPoller.onChange = notify;
+    cursorPoller.start();
   }
   scheduleBackup(store, log);
   onPricesLoaded(notify);                          // 价格加载/刷新后推送前端
@@ -390,8 +420,13 @@ export function startServer({ store, scanner, balancePoller, port, log = () => {
     res.writeHead(404); res.end();
   }, log));
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const onEarlyError = (err) => reject(err); // 端口被占等 listen 错误：交给调用方决定递增端口还是报错退出
+    server.once('error', onEarlyError);
     server.listen(port, '127.0.0.1', () => {
+      server.removeListener('error', onEarlyError);
+      // listen 成功后的运行期错误不能再 reject（promise 已完成），也别变成 unhandled
+      server.on('error', (err) => log(`server error: ${err?.message ?? err}`));
       log(`listening on http://127.0.0.1:${port}`);
       resolve(server);
     });

@@ -11,6 +11,9 @@ import { collectWorkbuddyFile } from './collectors/workbuddy.js';
 import { collectGrokFile } from './collectors/grok.js';
 import { collectPiFile } from './collectors/pi.js';
 import { collectOpencodeDb } from './collectors/opencode.js';
+import { collectAntigravityFile } from './collectors/antigravity.js';
+import { collectKimiFile } from './collectors/kimi.js';
+import { collectQoderFile } from './collectors/qoder.js';
 
 const COLLECTORS = {
   claude: async (store, args) => ({ ...(await collectClaudeFile(store, args)), state: { _v: args.version } }),
@@ -19,8 +22,11 @@ const COLLECTORS = {
   dsh: async (store, args) => ({ ...(await collectDshFile(store, args)), state: { _v: args.version } }), // 快照式，无跨次状态
   workbuddy: async (store, args) => ({ ...(await collectWorkbuddyFile(store, args)), state: { _v: args.version } }),
   grok: async (store, args) => ({ ...(await collectGrokFile(store, args)), state: { _v: args.version } }),
-  pi: collectPiFile,           // 自带 state：project 来自首行 session.cwd，须跨增量轮次保留
-  opencode: collectOpencodeDb, // 自带 state：message / part 两张表各一个 rowid 水位
+  pi: collectPiFile,             // 自带 state：project 来自首行 session.cwd，须跨增量轮次保留
+  opencode: collectOpencodeDb,   // 自带 state：message / part 两张表各一个 rowid 水位
+  antigravity: collectAntigravityFile, // 自带 state：上下文累计 + 模型 + 待补正事件
+  kimi: collectKimiFile,         // 自带 state：config.update 的模型别名
+  qoder: async (store, args) => ({ ...(await collectQoderFile(store, args)), state: { _v: args.version } }),
 };
 
 async function* walkByExt(root, match) {
@@ -51,7 +57,10 @@ async function* enumerate(source) {
     }
     return;
   }  for (const root of source.roots) {
-    for await (const p of walkByExt(root, (n) => n.endsWith('.jsonl'))) yield [p, null];
+    // jsonl 源可声明 match 收窄文件名（antigravity 的 brain 下只认 transcript*.jsonl，
+    // 其余 jsonl（如会话元数据）不产生文件行）
+    const match = source.match || ((n) => n.endsWith('.jsonl'));
+    for await (const p of walkByExt(root, match)) yield [p, null];
   }
 }
 

@@ -6,9 +6,11 @@ export const HOME = homedir();
 
 /**
  * 数据源注册表。
- * kind: jsonl  —— 递归扫描 *.jsonl（transcript 流式追加，字节游标增量）
+ * kind: jsonl  —— 递归扫描 *.jsonl（transcript 流式追加，字节游标增量；可用 match 收窄文件名）
  *       sqlite —— 单个 db 文件（rowid 水位增量，只读并发）
  *       zst    —— 递归扫描 *.zst（原子快照，mtime 变化即整体重解析 + dedup）
+ *       poller —— 非文件源（账号级 API 轮询，见 src/cursorUsage.js）：无 roots，仅为
+ *                  健康表/前端登记工具名；事件由 poller 直接入库
  * version: 采集器逻辑版本；files.state_json._v 落后时会自动全量重扫补数据（dedup 幂等）。
  */
 /**
@@ -115,6 +117,45 @@ export const SOURCES = [
     collector: 'opencode',
     version: 2, // v2: message 改按 time_updated 增量（rowid 水位漏掉"先插后改"的消息），重扫补回
   },
+  {
+    tool: 'antigravity',
+    label: 'Antigravity ≈',
+    // IDE / cli /（历史）ide 三个 variant 的 brain 目录都可能有会话；只收 transcript*.jsonl
+    roots: [join(HOME, '.gemini', 'antigravity', 'brain'),
+            join(HOME, '.gemini', 'antigravity-cli', 'brain'),
+            join(HOME, '.gemini', 'antigravity-ide', 'brain')],
+    kind: 'jsonl',
+    collector: 'antigravity',
+    version: 1,
+    match: (name) => name.startsWith('transcript') && name.endsWith('.jsonl'),
+  },
+  {
+    tool: 'kimi',
+    label: 'Kimi Code',
+    roots: [join(HOME, '.kimi-code', 'sessions')],
+    kind: 'jsonl',
+    collector: 'kimi',
+    version: 1,
+    match: (name) => name === 'wire.jsonl',
+  },
+  {
+    tool: 'qoder',
+    label: 'Qoder',
+    // 国际版与 CN 版（2026-08+ 起独立目录）都登记
+    roots: [join(HOME, '.qoder', 'projects'), join(HOME, '.qoder-cn', 'projects')],
+    kind: 'jsonl',
+    collector: 'qoder',
+    version: 1,
+  },
+  {
+    tool: 'cursor',
+    label: 'Cursor',
+    // 账号级 CSV 轮询（src/cursorUsage.js），非本地文件源——占位让健康表/前端登记它
+    roots: [],
+    kind: 'poller',
+    collector: null,
+    version: 1,
+  },
 ];
 
 /**
@@ -127,7 +168,14 @@ export const isOffline = () => process.env.TOKENMETER_OFFLINE === '1';
 
 export const DATA_DIR = join(HOME, '.tokenmeter');
 export const DB_PATH = join(DATA_DIR, 'tokenmeter.db');
-export const DEFAULT_PORT = 8787;
+/**
+ * 默认端口可用 TOKENMETER_PORT 覆盖（写进 LaunchAgent / 容器 / 测试环境时免 --port）。
+ * serve 在"未显式指定 --port"时遇占用会自动向后尝试（见 bin/tokenwatcher.js）。
+ */
+export const DEFAULT_PORT = (() => {
+  const p = Number(process.env.TOKENMETER_PORT);
+  return Number.isInteger(p) && p > 0 && p < 65536 ? p : 8787;
+})();
 export const WEB_DIR = join(import.meta.dirname, '..', 'web');
 /**
  * ECharts 的磁盘路径。

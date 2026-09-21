@@ -126,6 +126,55 @@ Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），�
 - ZCode 的 `model_usage` 只追加、不改行，rowid 水位够用——同为 sqlite 源也不能照抄增量策略，
   先确认那张表会不会删行、会不会原地更新
 
+### Kimi Code（官方 @moonshot-ai/kimi-code，本机实测）
+`~/.kimi-code/sessions/<wd 目录>/session_<uuid>/agents/<agent>/wire.jsonl`，字节游标增量。
+- 逐轮用量在 `context.append_loop_event` 包着的 `step.end` 上；`usage.record` 与 step.end
+  携带同一份数据，**只读 step.end，两处都读会双计**；
+- usage 跨版本三种形状：camelCase（`inputOther` 已是新输入）为主，Anthropic 风格兜底，
+  OpenAI 兼容形状（cached 折在 `input_tokens` 里、`input_tokens_details.cached_tokens`
+  单独减出——不减会缓存双计）；
+- 模型在文件头 `config.update.modelAlias`（"kimi-code/k3"→k3），随 state 存活跨增量轮次；
+- 时间戳在顶层 `entry.time`（epoch 毫秒）；dedup_key = `kimi:<step uuid>`；
+- 项目名读 `~/.kimi-code/workspaces.json`（wd 目录键 → name）。
+本机 9 条真实事件与独立重算逐条一致。
+
+### Qoder（本机实测：本地不报 token，只报积分）
+`~/.qoder/projects/<编码目录>/<session>.jsonl`（Anthropic Messages 形状，与 Claude Code
+transcript 同构；CN 版 2026-08+ 起用 ~/.qoder-cn/projects 姊妹目录）。旧版 IDE 的
+`SharedClientCache/cache/db/local.db` sqlite（token_info 列）已不存在于新版安装。
+- **实测（2026-09，qmodel_38max）：assistant 行 usage 四项全 0，真实消耗只在 `credits`
+  字段**（`original_credits` 为折前值）。取舍与 TokenTracker 一致：有真实 token 的行才入
+  事件（上游恢复上报即自动生效）；credits 不折算 token（无官方兑换率）——走独立的
+  `credit_usage` 表出"积分消耗"卡；
+- 同一 message.id 按 content block 拆多行（thinking 行无 usage、终结行带 usage），dedup
+  复用 store 的"输出更大者补齐"语义（与 ccmr 同坑同防）；
+- BYOK 模型 id 带 `qoder-custom-<uuid>/` 安装期前缀，剥离后入库（跨重装稳定）；
+- cwd 在 `workspace-directories` 行（转录首部）。
+本机 3 条积分记录与独立重算一致（1.30 积分）。
+
+### Cursor（账号级 CSV 账单）
+本地逐请求数据**不存在**：state.vscdb 的 bubble `tokenCount` 全 0、`cursorDiskKV` 的
+agentKv blob 无用量字段。唯一权威来源是官方导出
+`GET cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens`：
+- 凭证全取本地：ItemTable `cursorAuth/accessToken`（JWT）+ JWT `sub` 归一 userId
+  （native `…|user_XXX` 取尾段；WorkOS 桥接的 `google-oauth2|…` 整体保留）→ 拼
+  `WorkosCursorSessionToken` cookie。30 分钟轮询，未装/未登录静默跳过，fail-soft；
+- CSV **列名按表头解析**（Cursor 多次在表头插列改序）；口径：fresh input =
+  "Input (w/o Cache Write)"、cache_write = "Input (w/ Cache Write)"、cached = "Cache Read"，
+  total = 四项之和（与官方 Total 列核验相等）；Cost 列不采用（全源统一本地价格表）；
+- **dedup 边界**：CSV 行无稳定 id，用「日期|模型|五数值|同指纹序号」做指纹。重导出时
+  被修正数值的旧行会残留（新指纹另插）——已知边界，若 Cursor 未来提供行 id 再换。
+本机 546 行与 CSV 独立重算完全一致，重拉幂等。
+
+### Claude 官方配额（1.5.0 新增）
+凭证：macOS 登录钥匙串（service `Claude Code-credentials`）/ Linux·Windows 的
+`~/.claude/.credentials.json`，payload 形如 `{claudeAiOauth:{accessToken,...}}`。
+端点 `GET api.anthropic.com/api/oauth/usage`（`anthropic-beta: oauth-2025-04-20`），
+返回 `five_hour`/`seven_day`/`seven_day_opus`/`weekly_scoped`，窗口主体用 `used_percent`，
+weekly_scoped 数组元素用 `percent` + `scope.model.display_name`（两种命名并存）。
+401 = token 过期（跑一次 claude 刷新），10 分钟轮询，快照 30 分钟内视为有效，无凭证
+静默跳过并回落 5h 推算卡。`TOKENMETER_NO_KEYCHAIN=1` 跳过钥匙串（测试环境用）。
+
 ## 计价：DeepSeek 的峰谷价
 
 单价表 `~/.tokenmeter/pricing.json` 记的是**峰时价**，`off_peak` 为谷时折扣系数（DeepSeek 为 0.5）。
@@ -150,32 +199,45 @@ Windows 下 `%LOCALAPPDATA%`（取自其可执行体内的字符串常量），�
 
 每源接入后用独立脚本（Python/独立 SQL）对原始文件重算比对，全部精确一致。Codex 的正确口径经"官方面板累计值 vs 本地差分值"交叉验证（差值为官方跨设备统计）。WorkBuddy 积分费率经最小二乘残差验证。
 
-## Antigravity / antigravity-cli：调研结论是**当前不可接入**（2026-09 实测）
+## Antigravity / antigravity-cli：估算口径接入（2026-09-20 复核，推翻 9 月初"不可接入"结论）
+2026-09 初的调研结论是"逐请求用量没有以任何可解析的形式落地"——当时成立：conversations/*.db 的
+`gen_metadata` 为空、`.pb` 加密、transcript 无 usage 字段。该调研留了复核条件："真正用过之后重看
+`gen_metadata` 是否开始有行"。2026-09-18/20 的真实会话满足了这个条件，复核结果：
 
-Google Antigravity（IDE，`com.google.antigravity` 2.3.1）与 antigravity-cli 都在本机留了数据，
-但**逐请求 token 用量没有以任何可解析的形式落地**。逐项证据：
+- **`conversations/<uuid>.db` 的 `gen_metadata`（idx, data BLOB, size）开始有行**，且是**未加密
+  protobuf**（9 月版本的 .pb 才加密）。可解出（字段路径实测验证）：
+  `root.f1 → { f19: 模型名, f9.f10.f1: contextTokens（该轮上下文窗口大小）, f20 KV{1:"last_step_index", 2:N} }`；
+  该行覆盖到 step N，作用于 transcript 里 step N+1 的 PLANNER_RESPONSE；
+- `brain/<uuid>/.system_generated/logs/transcript.jsonl` 仍**无 usage**，但有完整对话流
+  （step_index / type / created_at / content / tool_calls / thinking）。
 
-| 位置 | 形态 | 有无用量 |
-|---|---|---|
-| `~/.gemini/antigravity-cli/conversation_summaries.db` | SQLite，1 张表 | 无。只有 title / step_count / workspace_uris / status 等元数据 |
-| `~/.gemini/antigravity-cli/conversations/*.db` | SQLite，per-conversation | `steps`、`gen_metadata` 表存在但为空；载荷列是 protobuf blob |
-| `~/.gemini/antigravity-cli/conversations/*.pb` | 二进制，768KB–1.2MB | **熵 8.00 bit/byte、可打印占比 37%、文件头各不相同且无压缩魔数**（非 gzip/zstd/zlib/brotli）→ 加密，非明文 protobuf。密钥在系统钥匙串（日志里有 `keyring.go`） |
-| `~/.gemini/*/brain/**/transcript.jsonl` | 可读 JSONL | 无。1628 条记录、112 个键路径里**没有一个**匹配 token/usage/cost/billing；唯一数值叶子是 `step_index` |
-| `~/.gemini/*/antigravity_state.pbtxt` | 文本 protobuf | 无。相关字段只有 `last_selected_agent_model` |
-| `~/Library/Application Support/Antigravity` | Electron 目录 | 无。`app_storage.json` 为空，Local Storage 里无 token 字样 |
+**估算法**（与 TokenTracker 的 parseAntigravityFile 同口径，其字段路径与我们的实测互证）：
 
-transcript.jsonl 的顶层键是 `step_index / source / type / status / created_at / content /
-tool_calls / thinking`——有完整的对话与工具调用，唯独没有 usage。直接 grep 到的 "token"
-字样全部来自对话正文（本仓库本身就在讨论 token），不是字段名。
+- 按 PLANNER_RESPONSE（每次 planner 调用）计一事件；
+- 输入 = 权威上下文增量：`contextTokens(step N+1 的 gen 行) - 上次计费时的上下文快照`
+  （防 O(N²) 重复计整段历史）。无 db 行时回落字符估算（会偏低：系统提示与技能清单只在
+  服务端上下文里，transcript 看不见——实测 24K vs ~1.6K）；**换模型时基线清零**
+  （切模型后整段历史确实作为新输入重发，跨模型无缓存）；
+- 输出 = est(content) + est(tool_calls)，思维链 = est(thinking)，est = CJK×1 + 其他×¼；
+  thinking 不回灌上下文累计（thoughts 不重发）；total = input + output + reasoning；
+- 模型优先级：db 行 f19 > 用户切换消息（"changed setting Model Selection …"）> variant
+  根 settings.json 默认；显示名归一成 slug（去括号档位/小写/截到 gemini|claude|gpt 前缀）。
 
-**留一个重要的保留**：实测机器的 CLI 日志反复出现 `You are not logged into Antigravity`，
-会话表因此为空；5 月那批 `.pb` 确实是登录期的真实使用，但已加密。所以不能排除
-"登录且活跃使用的装机会把用量写到别处"。要复核，在真正用过之后重跑调研：按上表逐个位置
-确认，重点看 `conversations/*.db` 的 `gen_metadata`（列名 `data`/`size`，最像放生成元数据的地方）
-是否开始有行。
+**两个实测踩到的坑**：
 
-结论：**在拿到可解析的用量来源之前不接**。写一个解析猜测字段的采集器，只会做出一个
-永远报 0 却在健康面板显示"正常"的数据源，比不接更有害。
+1. **上游会把历史行重放/重写进 transcript**（实测一个文件 step 70–111 整段出现两遍）。重放行
+   照常处理会双重膨胀上下文；更糟的是带权威 db 的会话里，重放算出的差分 input=0 会经
+   "权威值补正"通道**覆盖掉原计费**（真实数据恰好没有"重放 + 有 db"同时成立的文件，是
+   测试夹具先抓住的）。防护：state 记录已见 step_index（step_index 单调，重复即重放），
+   重放行整体跳过；
+2. **权威 db 行可能晚于 transcript 行落盘**：先按估算入账的事件记进 `state.pending`，
+   之后任一轮采集拿到权威值就原地 UPDATE 补正（dedup 只防重插不更新，不补正会把第一眼
+   的低估钉死；scanner 按 transcript mtime 跳过未变文件，所以补正搭"下次 transcript 变化"
+   的便车，不额外触发扫描）。
+
+**验证**：临时 HOME + 符号链接指向真实数据，独立 Python 重算逐条比对——744/744 事件、
+五列数值完全一致（含模型切换全额重计的两条、重放段去重、0 用量跳过）。估算源在 UI 与
+README 明确标注「估算」；模型无价格时如实进"未配价"列表，不编造价格。
 
 ## 不可统计的边界
 

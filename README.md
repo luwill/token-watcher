@@ -6,7 +6,7 @@
 
 > 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
-## 支持的工具（9 源）
+## 支持的工具（13 源）
 
 | 工具 | 数据位置 | 能看到什么 |
 |---|---|---|
@@ -19,8 +19,24 @@
 | Grok Build | `~/.grok/sessions` | 轮次用量明细（含厂商侧成本刻度）、工具调用 |
 | Pi | `~/.pi/agent/sessions` | 逐请求明细、工具调用（会话 JSONL 自带 USD 成本明细） |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 逐请求明细（message 表）、工具调用 |
+| Antigravity ≈ | `~/.gemini/antigravity*/brain/*/logs/transcript.jsonl` | 每 planner 轮的上下文/输出/思维链——输入取 db 权威上下文增量，输出按字符估算 |
+| Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | 逐轮明细（step.end 用量，camelCase/Anthropic/OpenAI 兼容三形状自适应） |
+| Qoder | `~/.qoder{,-cn}/projects/**/*.jsonl` | **积分账本**（上游本地不报 token，只报 credits）；若上游恢复上报 token 则自动入事件 |
+| Cursor | 账号级用量账单（CSV） | 逐请求明细（缓存三段分项）——本地无逐请求数据，用本地凭证拉官方导出 |
 
 不支持的：网页版聊天（ChatGPT/豆包/DeepSeek 网页等）——token 计数在服务端，本地无留痕，原理上不可统计。
+
+> **口径说明**：Kimi Code / Qoder / Antigravity 均在本机真实数据上与独立重算逐条核对一致。
+> **Qoder 实测本地只报积分不报 token**（2026-09，qmodel_38max）：积分走独立账本出
+> "积分消耗"卡，不折算 token——无官方兑换率，编造即失真；token 事件待上游恢复上报。
+> **Cursor 本地不留逐请求数据**（state.vscdb 全零），唯一权威是账号级 CSV 导出：
+> 凭证取自本地（state.vscdb 的 JWT 拼会话 cookie，只在服务进程内使用），30 分钟轮询。
+> Gemini CLI 上游已于 2026-06-18 官方过渡并入 Antigravity CLI，不再作为独立源。
+> **Antigravity 本地没有任何逐请求 usage**（9 月两次调研实测），采用估算口径：输入 =
+> conversations db 里 gen_metadata 的权威上下文窗口增量（protobuf，含系统提示与技能清单），
+> 输出/思维链按字符数估算（CJK×1 + 其他×¼），与 TokenTracker 同法；已在本机 744 条真实
+> 事件上与独立重算逐条核对一致。估算源在界面上以「≈」后缀标注（如 Antigravity ≈），费用卡中其模型如实列入
+> "未配价"而非编造价格。
 
 ## 快速开始
 
@@ -97,13 +113,45 @@ npm run build-bar    # 重新编译菜单栏 app（需 Xcode CLT；发版时 pre
 npx 下不建议装开机自启：生成的 LaunchAgent 会指向 npx 的缓存目录，而那个目录随时
 可能被 npm 清理，届时服务会静默起不来。要常驻就用全局安装。
 
+### 方式四：Homebrew（macOS）
+
+```bash
+brew install luwill/token-watcher/token-watcher
+token-watcher serve
+```
+
+formula 直接引用 npm registry 的 tarball（见 `packaging/homebrew/`），装出来的功能与
+`npm i -g` 完全一致（面板、采集、菜单栏胶囊、开机自启）。Homebrew 与 npm 装一份即可。
+
+### serve 的端口与自动打开
+
+- 未显式指定端口（默认 8787，可用环境变量 `TOKENMETER_PORT` 改）且被占用时，自动向后
+  尝试最多 20 个端口，面板照常起来；**显式 `--port` 被占则大声失败**——菜单栏胶囊等
+  指向固定端口，悄悄换一个更危险。
+- 交互式终端里启动 `serve` 会自动打开浏览器（launchd / CI 下 stdout 不是 TTY，不会开）；
+  不想开加 `--no-open`。
+
 ### 其他命令
 
 ```bash
-token-watcher today              # 终端速览今日消耗
-token-watcher scan               # 只扫描一次
-token-watcher serve --port 9000
+token-watcher today               # 终端速览今日消耗
+token-watcher today --json        # 机器可读（可管道给 jq / 供 agent 调用）
+token-watcher today --light       # 纯 ASCII 表（CI/SSH 终端安全）
+token-watcher sessions --day 2026-09-20            # 会话级统计（JSON）
+token-watcher sessions --from 2026-09-01 --to 2026-09-30 --csv --out s.csv
+token-watcher sessions --day 2026-09-20 --git      # 每个会话挂上窗口内的 git 提交（产出归因）
+token-watcher wrapped [--year 2026] [--json]       # 年度报告（全年/最猛一天/连续天数/项目 Top）
+token-watcher doctor              # 环境与数据源体检（node 版本/zstd/库完整性/逐源健康）
+token-watcher uninstall           # 摘除开机自启等本机痕迹
+token-watcher uninstall --purge-data --yes         # 连 ~/.tokenmeter 数据目录一起删（不可恢复）
+token-watcher scan                # 只扫描一次
+token-watcher serve --port 9000 --no-open
+token-watcher --version
 ```
+
+`sessions --git` 的归因窗口是 `[会话首事件, 末事件 + 30 分钟]`（生成结束到落提交的常见
+滞后），从源文件首段读完整 cwd（events 表只存目录名，反推不唯一）；非 git 项目的会话
+`commits` 保持 `null`，不编造。
 
 ## 运行要求
 
@@ -125,11 +173,14 @@ token-watcher serve --port 9000
 - **统计面板**：指标卡、近一年 GitHub 风格日历热力图（每日/每周/累计）、按天/模型/工具图表、最近请求实时流
 - **会话钻取**：点击趋势图任意一天 → 会话列表（峰值上下文估算）→ 单会话逐请求 token 曲线
 - **工具活动**：四源工具调用频次榜
-- **配额**：Codex 官方配额直读（百分比/重置倒计时）、Claude 订阅 5h 窗口推算（session-blocks 法）
+- **配额**：Codex 官方配额直读（百分比/重置倒计时）、**Claude 官方配额**（复用 Claude Code
+  本地 OAuth 凭证调官方用量端点，5 小时窗/周窗/模型专属周额度；无凭证时自动回落 5h 窗口推算）
+  Statuspage 公开接口，5 分钟刷新；厂商挂没挂一眼可辨）
+- **积分账本**：Qoder 积分消耗卡（今日/累计，官方 credits 直读）
 - **余额与费用**：DeepSeek/Kimi 余额轮询（读 `~/.ccmr/.env` 的 key，密钥不出后端）；ccmr 侧按官方牌价折算（`~/.tokenmeter/pricing.json` 可编辑）+ 余额对账
 - **阈值通知**（菜单栏 App）：Codex ≥80%/95%、余额 <¥10/¥2 弹 macOS 通知，级别上升只提醒一次
 - **数据源健康自检**：解析错误标红、"文件在写但无新事件"标黄——私有格式漂移不再静默失败
-- **导出与备份**：CSV 导出、每日 `VACUUM INTO` 备份保留 7 份
+- **导出与备份**：CSV 导出、会话/年度报告 CLI、每日 `VACUUM INTO` 备份保留 7 份
 
 ## 隐私
 
@@ -137,13 +188,15 @@ token-watcher serve --port 9000
 - API 密钥仅在服务进程内使用（调厂商余额接口），不入库、不进前端
 - 统计库只存聚合事件（时间/工具/模型/token 数/项目名），不存对话内容
 
-**出站请求清单**（只有这三类，都不携带你的用量数据）：
+**出站请求清单**（只有这四类，都不携带你的用量数据）：
 
 | 用途 | 端点 | 频率 |
 |---|---|---|
 | USD→CNY 汇率 | `open.er-api.com`、`cdn.jsdelivr.net` | 12 小时，本地缓存兜底 |
 | 模型牌价 | `raw.githubusercontent.com`（LiteLLM 价格表） | 24 小时，本地缓存兜底 |
 | 厂商余额 | DeepSeek / Kimi 官方接口（带你的 key） | 30 分钟，连续失败自动熔断 |
+| Claude 官方配额 | `api.anthropic.com/api/oauth/usage`（带 Claude Code 本地 OAuth token，macOS 首次可能弹一次钥匙串授权） | 10 分钟，无凭证自动跳过 |
+| Cursor 用量账单 | `cursor.com/api/dashboard/export-usage-events-csv`（带本地凭证拼的会话 cookie） | 30 分钟，未装/未登录自动跳过 |
 
 要完全断网运行，设 `TOKENMETER_OFFLINE=1`：三类请求全部跳过，改用本地缓存与
 `~/.tokenmeter/pricing.json`（可设 `usd_to_cny` + `usd_to_cny_manual: true` 固定汇率）。
@@ -163,11 +216,45 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 
 - 跨平台验证（Linux/Windows）
 - 订阅 ROI 视角：API 等值成本 vs 订阅实付
-- 按项目维度的用量与花费
-- 配置文件（数据目录 / 端口 / 告警阈值）
+- 更多官方配额直连（ZCode / Grok 的官方端点）
+- Cursor / Copilot 数据源（待拿到可验证的真实数据布局）
 - i18n / 英文 README
 
 ## 更新日志
+
+### 1.5.0（2026-09-20，待发布）
+
+对标 [TokenTracker](https://github.com/xiufengsun/TokenTracker) 补齐 11 项能力，同时守住
+本项目的差异化（实时、逐请求粒度、费用对账、零遥测、单包零依赖）。
+
+- **新增 Kimi Code、Qoder、Antigravity 三个数据源 + Cursor 账单（共 13 源，Kiro 移除）。**
+  Kimi Code 解析 `~/.kimi-code/sessions/**/wire.jsonl`（step.end 用量，三种形状自适应，
+  项目名来自 workspaces.json）；Qoder 解析 `~/.qoder{,-cn}/projects/**`（实测本地只报
+  积分不报 token：积分入独立账本出卡，token 事件待上游恢复上报自动生效）。
+  Gemini CLI 上游已于 2026-06-18 官方过渡并入 Antigravity CLI，不再单列。
+  Antigravity 为**估算口径**（本地无逐请求 usage，实测两轮确认）：输入取 conversations
+  db 的 gen_metadata 权威上下文增量，输出/思维链按字符估算（CJK×1+其他×¼，与
+  TokenTracker 同法），界面标注「估算」；估算法在本机 744 条真实事件上与独立重算逐条
+  核对一致，且处理了上游 transcript 重放历史行的去重（step_index 重复即跳过，防上下文
+  双重膨胀与差分负值覆盖原计费）与权威值晚到的原地补正。三源均在本机真实数据上独立重算逐条核对
+- **Claude 官方配额卡。** 复用 Claude Code 本地 OAuth 凭证（macOS 钥匙串 / Linux·Win 的
+  `~/.claude/.credentials.json`）调官方用量端点，显示 5 小时窗、周窗与模型专属周额度的
+  官方百分比和重置倒计时；无凭证/离线时自动回落原有 5h 推算卡。token 只在服务进程内
+  使用，不入库不进前端；`TOKENMETER_NO_KEYCHAIN=1` 可禁用钥匙串读取
+- **CLI 补全**：`today --json`（机器可读，stdout 纯 JSON）与 `--light`（纯 ASCII）；
+  `sessions --day/--from/--to --json/--csv --out`（会话级统计导出）；`wrapped`（年度
+  报告，含最猛一天/连续天数/项目 Top，`--json` 可编程消费）；`doctor`（环境 + 库完整性 +
+  逐源健康体检，有 error 退出码非 0）；`uninstall`（摘 LaunchAgent，`--purge-data`
+  才动数据目录且需确认）；`--version` / `--help`
+- **sessions --git 提交归因**：从源文件首段读完整 cwd（events 只存目录名），在
+  `[首事件, 末事件+30min]` 窗口内挂 git 提交——把"花了多少 token"连到"产出了哪些 commit"；
+  非 git 会话 `commits=null` 不编造
+- **serve 体验**：默认端口被占时自动向后尝试（显式 `--port` 仍大声失败，防菜单栏胶囊
+  连不上）；交互终端自动打开面板（`--no-open` 可关，launchd 下不会开）；`TOKENMETER_PORT`
+  环境变量可改默认端口
+- **Homebrew 分发**：`brew install luwill/token-watcher/token-watcher`（formula 在
+  `packaging/homebrew/`，直连 npm tarball）
+- Claude 官方配额卡的重置倒计时按 ISO 时间归一，不再恒显 `--`
 
 ### 1.4.4（2026-09-18，待发布）
 

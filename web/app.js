@@ -89,7 +89,7 @@ function render() {
   // 各组件独立容错：单个失败不连坐整页，错误记录便于排查
   window.__renderErr = [];
   const safe = (name, fn) => { try { fn(); } catch (e) { window.__renderErr.push(name + ': ' + e.message); } };
-  safe('status', () => renderStatus(s.quota, s.balances, s.wb_rates, s.recon, s.costs));
+  safe('status', () => renderStatus(s.quota, s.balances, s.wb_rates, s.recon, s.costs, s.credits));
   safe('health', () => renderHealth(s.health));
   safe('live', () => renderLive(s.live));
   safe('balanceStatus', () => renderBalanceStatus(s.balance_status));
@@ -104,7 +104,7 @@ function render() {
   safe('sessions', () => loadSessions());
 }
 
-function renderStatus(quota, balances, rates, recon, costs) {
+function renderStatus(quota, balances, rates, recon, costs, credits) {
   const host = document.getElementById('quota-extra');
   if (!host) return;
   let html = '';
@@ -128,17 +128,40 @@ function renderStatus(quota, balances, rates, recon, costs) {
     </div>`;
   }
 
-  // Claude 5h 窗口
-  const c5 = quota?.claude5h;
-  if (c5 && c5.active) {
+  // Claude 官方配额（OAuth 凭证可得时优先；无凭证回落到下方 5h 推算卡）
+  const cu = quota?.claude_usage;
+  if (cu && !cu.stale && (cu.five_hour || cu.seven_day || cu.weekly_scoped?.length)) {
+    const winRow = (label, w) => {
+      if (!w) return '';
+      const used = Number(w.used_percent) || 0;
+      // .cd 倒计时按 unix 秒解析 data-at；Claude 官方给的是 ISO 字符串，先归一到秒
+      const atSec = w.resets_at ? Math.floor(Date.parse(w.resets_at) / 1000) || '' : '';
+      return `<div class="q-win">
+        <div class="q-meta q-win-head"><span><b>${esc(label)}</b> · 已用 ${used.toFixed(1)}%</span>
+          <span class="dim">重置 <b class="cd" data-at="${atSec}">--</b></span></div>
+        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+      </div>`;
+    };
+    const scoped = (cu.weekly_scoped || []).map(s => winRow(`${s.label} 周额度`, s)).join('');
     html += `<div class="quota-card">
-      <div class="quota-head"><span class="q-title">Claude 5h 窗口</span><span class="q-plan cc">推算</span>
-        <span class="q-reset">${c5.window_calls} 次调用</span></div>
-      <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">${fmt(c5.window_tokens)}</span>
-        <span class="dim">剩余 <b class="cd" data-at="${Math.floor(c5.window_ends_at / 1000)}">--</b></span>
-      </div>
+      <div class="quota-head"><span class="q-title">Claude 配额</span><span class="q-plan cc">官方</span></div>
+      ${winRow('5 小时窗口', cu.five_hour)}
+      ${winRow('每周窗口', cu.seven_day)}
+      ${scoped}
     </div>`;
+  } else {
+    // Claude 5h 窗口（无官方数据时的推算兜底）
+    const c5 = quota?.claude5h;
+    if (c5 && c5.active) {
+      html += `<div class="quota-card">
+        <div class="quota-head"><span class="q-title">Claude 5h 窗口</span><span class="q-plan cc">推算</span>
+          <span class="q-reset">${c5.window_calls} 次调用</span></div>
+        <div class="q-meta" style="margin-top:2px">
+          <span style="font-size:20px;font-weight:650">${fmt(c5.window_tokens)}</span>
+          <span class="dim">剩余 <b class="cd" data-at="${Math.floor(c5.window_ends_at / 1000)}">--</b></span>
+        </div>
+      </div>`;
+    }
   }
 
   // 厂商余额（含对账）
@@ -175,6 +198,19 @@ function renderStatus(quota, balances, rates, recon, costs) {
       <div class="recon dim" title="${chips}">${chips}</div>
       <div class="recon dim" style="margin-top:2px">ccmr 为实付 · 订阅工具为 API 等值成本</div>
       ${unpriced}
+    </div>`;
+  }
+
+  // 积分制源的消耗（Qoder：本地不报 token，只报积分——如实按积分展示，不折算）
+  if (credits?.qoder && (credits.qoder.today > 0 || credits.qoder.total > 0)) {
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">Qoder 积分消耗</span>
+        <span class="q-plan cc">官方口径</span></div>
+      <div class="q-meta" style="margin-top:2px">
+        <span style="font-size:20px;font-weight:650">今日 ${credits.qoder.today.toFixed(2)}</span>
+        <span class="dim">累计 ${credits.qoder.total.toFixed(1)} 积分</span>
+      </div>
+      <div class="recon dim">上游本地不报 token，仅积分；token 待其恢复上报</div>
     </div>`;
   }
 

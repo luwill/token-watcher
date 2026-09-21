@@ -42,6 +42,7 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 }
 .load-error[hidden] { display: none; }
 
+
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
@@ -106,6 +107,10 @@ td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: t
 .badge.grok { color: #e6edf3; background: rgba(230,237,243,.12); }
 .badge.pi { color: #2dd4bf; background: rgba(45,212,191,.12); }
 .badge.opencode { color: #ff8c42; background: rgba(255,140,66,.12); }
+.badge.kimi { color: #95d5b2; background: rgba(149,213,178,.12); }
+.badge.qoder { color: #b98a68; background: rgba(156,102,68,.16); }
+.badge.cursor { color: #f2cc8f; background: rgba(242,204,143,.12); }
+.badge.antigravity { color: #a9a3b8; background: rgba(109,104,117,.18); }
 
 .rates-card { grid-column: span 2; min-width: 0; }
 .rates-table { width: 100%; font-size: 12px; }
