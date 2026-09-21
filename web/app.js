@@ -120,7 +120,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
     const rows = d.windows.map((w) => {
       const used = Number(w.used_percent) || 0;
       return `<div class="q-win">
-        <div class="q-meta q-win-head"><span><b>${esc(windowLabel(w.window_minutes))}</b> · 已用 ${used.toFixed(1)}%</span>
+        <div class="q-meta q-win-head"><span title="已用 ${used.toFixed(1)}%"><b>${esc(windowLabel(w.window_minutes))}</b> ${used.toFixed(1)}%</span>
           <span class="dim">重置 <b class="cd" data-at="${esc(w.resets_at)}">--</b></span></div>
         <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
       </div>`;
@@ -128,6 +128,30 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
     html += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">Codex 配额</span>
         <span class="q-plan">${esc(d.plan_type)}</span></div>
+      ${rows}
+    </div>`;
+  }
+
+  // GLM Coding Plan 配额（积分口径，官方 monitor 端点）。与 Codex 配额卡同构：
+  // 百分比 + 进度条 + 重置倒计时，积分数值放 tooltip；MCP 调用配额进 summary JSON 不占卡面
+  const zq = quota?.zcode;
+  if (zq && !zq.stale && zq.windows?.length) {
+    const intFmt = (x) => Number(x).toLocaleString('zh-CN');
+    const winRow = (w, unit) => {
+      const used = Number(w.used_percent) || 0;
+      const tip = Number.isFinite(w.used) && Number.isFinite(w.total)
+        ? ` title="已用 ${used.toFixed(1)}% · ${intFmt(w.used)} / ${intFmt(w.total)} ${unit}"` : ' title="已用"';
+      const reset = w.resets_at
+        ? `<span class="dim">重置 <b class="cd" data-at="${Math.floor(w.resets_at / 1000)}">--</b></span>` : '';
+      return `<div class="q-win">
+        <div class="q-meta q-win-head"><span${tip}><b>${esc(w.label)}</b> ${used.toFixed(1)}%</span>${reset}</div>
+        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+      </div>`;
+    };
+    const rows = zq.windows.map((w) => winRow(w, '积分')).join('');
+    html += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">GLM Coding Plan</span>
+        ${zq.level ? `<span class="q-plan">${esc(String(zq.level).toUpperCase())}</span>` : ''}</div>
       ${rows}
     </div>`;
   }

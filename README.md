@@ -54,7 +54,7 @@ spend so you can see when the estimate drifts.
 | Claude Code | `~/.claude/projects` | Per-request tokens, model mix |
 | ccmr (claude-code-model-router) | `~/.claude-gateway/projects` | Same, with real model names behind the router |
 | Codex | `~/.codex/sessions` | Per-request tokens, **official quota % and resets** (5h / weekly), models incl. auto-review, tool calls |
-| ZCode | `~/.zcode/cli/db/db.sqlite` | Per-request details, tool calls |
+| ZCode | `~/.zcode/cli/db/db.sqlite` | Per-request details, tool calls, **GLM Coding Plan credit windows** (5h / monthly, official API) |
 | dsh (DeepSeek Harness) | `~/.dsh/sessions` | Per-request details (multi-frame zstd snapshots) |
 | WorkBuddy | `~/.WorkBuddy/projects` | Per-request details + **self-learned credit rates** |
 | Grok Build | `~/.grok/sessions` | Per-turn usage (incl. vendor cost scale), tool calls |
@@ -149,8 +149,9 @@ sent to the frontend. Usage data never leaves your machine.
 Outbound requests (only these, none carry your usage data): FX rate (12h),
 LiteLLM price table (24h), vendor balances (30min, with your key), Claude
 official quota (10min, with Claude Code's local OAuth token), Cursor usage
-CSV (30min, with a cookie built from local credentials). Set
-`TOKENMETER_OFFLINE=1` to skip all of them.
+CSV (30min, with a cookie built from local credentials), GLM Coding Plan
+credit quota (10min, with ZCode's own local API key; MCP tool quota is read
+from local logs only). Set `TOKENMETER_OFFLINE=1` to skip all of them.
 
 ## Requirements
 

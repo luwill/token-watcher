@@ -9,6 +9,7 @@ import { loadPricing, computeCosts, computeRecon } from './pricing.js';
 import { computeRoi } from './roi.js';
 import { codexQuotaView } from './codexQuota.js';
 import { claudeUsageView, ClaudeUsagePoller } from './claudeUsage.js';
+import { zcodeQuotaView, ZcodeQuotaPoller } from './zcodeQuota.js';
 import { CursorUsagePoller } from './cursorUsage.js';
 import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
@@ -205,6 +206,7 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
       codex: codexQuotaView(store.getQuota('codex')),
       claude5h: computeClaude5h(db),
       claude_usage: claudeUsageView(store), // 官方窗口（有凭证时）；null → 前端回落 5h 推算
+      zcode: zcodeQuotaView(store), // GLM Coding Plan 积分窗口（5h/月度）+ MCP 调用
     },
     balances: store.getBalances(),
     credits: store.creditSummary(), // 以积分为计费单位的源（Qoder 等）：今日/累计
@@ -288,7 +290,7 @@ function scheduleBackup(store, log = () => {}) {
   setInterval(run, 24 * 3600_000).unref?.();
 }
 
-export function startServer({ store, scanner, balancePoller, claudePoller, cursorPoller, port, log = () => {} }) {
+export function startServer({ store, scanner, balancePoller, claudePoller, cursorPoller, zcodePoller, port, log = () => {} }) {
   const clients = new Set();
   const notify = () => { for (const res of clients) res.write(`data: {"type":"update"}\n\n`); };
   scanner.on('update', notify);
@@ -316,6 +318,14 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
     cursorPoller = new CursorUsagePoller(store, { log });
     cursorPoller.onChange = notify;
     cursorPoller.start();
+  }
+  if (zcodePoller) {
+    zcodePoller.onChange = notify;
+    zcodePoller.start();
+  } else {
+    zcodePoller = new ZcodeQuotaPoller(store, { log });
+    zcodePoller.onChange = notify;
+    zcodePoller.start();
   }
   scheduleBackup(store, log);
   onPricesLoaded(notify);                          // 价格加载/刷新后推送前端

@@ -51,7 +51,9 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .card .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .card .l { color: var(--dim); font-size: 11px; margin-top: 3px; letter-spacing: .3px; }
 
-.quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; margin-bottom: 14px; }
+/* 200px 下限让 6 张紧凑卡（配额×2/余额×2/积分/GLM）在常见宽度里挤进同一行，
+   232px 会把最后一张挤到第二行、右侧留下整排空列 */
+.quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .quota-extra:empty { display: none; }
 /* 明细宽卡（花费/ROI/费率）：与紧凑卡分网格，避免行内高度差 140px+ 全变成卡内空白 */
 .quota-wide { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; margin-bottom: 14px; }
@@ -67,7 +69,7 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 .q-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; font-size: 13px; }
 .quota-note { display: flex; align-items: center; font-size: 12px; }
 .q-win + .q-win { margin-top: 10px; }
-.q-win-head { margin: 0 0 6px; }
+.q-win-head { margin: 0 0 6px; font-size: 12px; /* 紧凑卡 204px 宽下 13px 会把"标签+已用%+重置倒计时"折成两行 */ }
 
 .heat { margin-bottom: 14px; }
 .heat-modes { float: right; display: inline-flex; gap: 4px; }

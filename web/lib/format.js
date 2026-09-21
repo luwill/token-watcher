@@ -52,13 +52,15 @@ export function windowLabel(minutes) {
   return `${m} 分钟`;
 }
 
-/** 倒计时：满一天带"天"并省去秒（周窗口的重置常在几天后），不满一天精确到秒 */
+/** 倒计时：紧凑的数字格式（"2天 3:08" / "3:57:18" / "57:18"）——配额卡窗口行只有
+ * 约 170px 宽，"3时57分18秒"式全宽中文会把"标签 · 已用% + 重置"折成两行 */
 export function fmtCountdown(ms) {
   if (!(ms > 0)) return '已结束';
   const d = Math.floor(ms / 8.64e7);
   const h = Math.floor((ms % 8.64e7) / 3.6e6);
   const m = String(Math.floor((ms % 3.6e6) / 6e4)).padStart(2, '0');
-  if (d > 0) return `${d}天${h}时${m}分`;
   const sec = String(Math.floor((ms % 6e4) / 1000)).padStart(2, '0');
-  return `${h}时${m}分${sec}秒`;
+  if (d > 0) return `${d}天 ${h}:${m}`;
+  if (h > 0) return `${h}:${m}:${sec}`;
+  return `${m}:${sec}`;
 }

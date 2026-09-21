@@ -141,8 +141,8 @@ console.log('\n[2b] 前端纯函数（lib/）');
   ok('Codex 配额卡不再写死"周配额"', !app.includes('Codex 周配额'));
   // 周窗口的重置常在几天后，"95时59分"要心算才知道是四天
   const H = 3.6e6;
-  ok('倒计时满一天带"天"', fmtCountdown?.(4 * 24 * H - 1000) === '3天23时59分', String(fmtCountdown?.(4 * 24 * H - 1000)));
-  ok('倒计时不满一天保留秒', fmtCountdown?.(3 * H + 57 * 6e4 + 18e3) === '3时57分18秒', String(fmtCountdown?.(3 * H + 57 * 6e4 + 18e3)));
+  ok('倒计时满一天带"天"（紧凑格式）', fmtCountdown?.(4 * 24 * H - 1000) === '3天 23:59', String(fmtCountdown?.(4 * 24 * H - 1000)));
+  ok('倒计时不满一天保留秒', fmtCountdown?.(3 * H + 57 * 6e4 + 18e3) === '3:57:18', String(fmtCountdown?.(3 * H + 57 * 6e4 + 18e3)));
   ok('倒计时到点显示已结束', fmtCountdown?.(0) === '已结束' && fmtCountdown?.(-5) === '已结束');
   ok('Codex 配额卡按窗口逐条渲染', /windows/.test(app) && /windowLabel\(/.test(app));
 
@@ -1595,6 +1595,51 @@ console.log('\n[13] Claude 官方配额单元');
   const sessionsMod = await import(pathToFileURL(join(ROOT, 'src/sessions.js')).href);
   const csv = sessionsMod.sessionsToCsv([{ session_id: 's', tool: 't', project: 'a,b"c', first_ts: 1, last_ts: 2, calls: 1, total: 3, peak: 3, models: 'm' }]);
   ok('sessions CSV 转义逗号与引号', csv.split('\n')[1].startsWith('s,t,"a,b""c"'), csv);
+
+  // ZCode / GLM Coding Plan 官方配额：字段语义按 2026-09-21 本机实测（percentage=已用%，
+  // usage=总额度，currentValue=已用，nextResetTime=ms；unit=3→5h、unit=6→月度）
+  const zq = await import(pathToFileURL(join(ROOT, 'src/zcodeQuota.js')).href);
+  const REAL_BODY = { code: 200, msg: '操作成功', success: true, data: { level: 'pro', limits: [
+    { type: 'CREDIT_LIMIT', unit: 3, number: 5, usage: 12000, currentValue: 725, remaining: 11274, percentage: 6, nextResetTime: 1790011302789 },
+    { type: 'CREDIT_LIMIT', unit: 6, number: 1, usage: 60000, currentValue: 28918, remaining: 31081, percentage: 48, nextResetTime: 1790310756997 },
+  ] } };
+  const zn = zq.normalizeZcodeQuota(REAL_BODY);
+  ok('zcode 配额归一化：实测窗口（5 小时 6% / 月度 48%）与积分数值',
+    zn?.windows?.length === 2
+    && zn.windows[0].label === '5 小时' && zn.windows[0].used_percent === 6
+    && zn.windows[0].used === 725 && zn.windows[0].total === 12000
+    && zn.windows[0].resets_at === 1790011302789
+    && zn.windows[1].label === '月度' && zn.windows[1].used_percent === 48 && zn.level === 'pro',
+    JSON.stringify(zn));
+  ok('zcode 没见过的窗口组合如实标注 unit（不硬贴标签）',
+    zq.normalizeZcodeQuota({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 9, percentage: 3 }] } })
+      ?.windows?.[0]?.label === '窗口 unit=9');
+  ok('zcode 结构不认识返回 null（接口改版≠0%）',
+    zq.normalizeZcodeQuota({ foo: 1 }) === null && zq.normalizeZcodeQuota(null) === null);
+  const z401 = await zq.fetchZcodeQuota({ origin: 'https://bigmodel.cn', apiKey: 'k' },
+    { fetchImpl: () => Promise.resolve({ status: 401 }) }).catch(e => e);
+  ok('zcode 401 给出可操作的提示（跑一次 zcode 登录）', /zcode/i.test(z401?.message || ''), z401?.message);
+  const zcodeHome = mkdtempSync(join(tmpdir(), 'tokenmeter-zcode-'));
+  ok('zcode 未装/未配置时 targets 为空（正常态）',
+    (await zq.zcodeQuotaTargets({ home: zcodeHome })).length === 0);
+  // MCP 调用配额：本地日志兜底。6 小时新鲜度窗下，"看昨天的日志"只在跨午夜场景有效
+  const zlogDir = join(zcodeHome, '.zcode/v2/logs');
+  mkdirSync(zlogDir, { recursive: true });
+  const now2 = Date.now();
+  const d0 = new Date(now2), d1 = new Date(now2 - 864e5);
+  const day = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const logLine = (d, used) => `[${day(d)} 23:50:00.000] [info] [usage-stats] 官方 MCP 额度响应 ${JSON.stringify({ body: JSON.stringify({ code: 0, data: { total_usage: { used, limit: 1000, remaining: 1000 - used } } }), status: 200 })}`;
+  // 场景一：今天 00:10，今天的日志还没写，昨日 23:50 的记录仍新鲜
+  writeFileSync(join(zlogDir, `${day(d1)}.log`), logLine(d1, 3) + '\n');
+  const justAfterMidnight = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 0, 10).getTime();
+  const mcpOld = await zq.readZcodeMcpUsage({ home: zcodeHome, nowMs: justAfterMidnight });
+  ok('zcode MCP 配额跨午夜从昨日日志解出', mcpOld?.used === 3 && mcpOld?.limit === 1000, JSON.stringify(mcpOld));
+  // 场景二：今天的日志存在时优先读今天（合成时刻 23:55，与真实时钟解耦）
+  writeFileSync(join(zlogDir, `${day(d0)}.log`), logLine(d0, 3) + '\n');
+  const tonight2355 = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 23, 55).getTime();
+  ok('zcode MCP 配额优先取今日日志', (await zq.readZcodeMcpUsage({ home: zcodeHome, nowMs: tonight2355 }))?.used === 3);
+  ok('zcode 日志全过期/缺失返回 null', await zq.readZcodeMcpUsage({ home: zcodeHome, nowMs: tonight2355 + 7 * 3600_000 }) === null);
+  rmSync(zcodeHome, { recursive: true, force: true });
 
   // Cursor：本地无逐请求 token，走账号级 CSV。单元覆盖列名解析、口径换算、
   // 同值重复行指纹、poller 幂等（mock fetch + 假 cookie，不出网）
