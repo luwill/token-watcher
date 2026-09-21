@@ -1158,7 +1158,9 @@ console.log('\n[6] DeepSeek 峰谷价');
 /* ---------- 第 7 层：无 zstd CLI 时仍能解 dsh ----------
  * 常驻服务由 launchd 拉起，其 PATH 是系统默认，不含 /opt/homebrew/bin，而 zstd 通常
  * 只装在那里。于是守护进程解不开 dsh 快照（报 "zstd not installed"），只有人在交互
- * shell 里手跑 scan 才正常——面板因此长期停在旧数据。清空 PATH 精确复现该环境。
+ * shell 里手跑 scan 才正常——面板因此长期停在旧数据。清空 PATH 精确复现该环境
+ * （注意：ZSTD_BINS 里的绝对路径回落不受 PATH 影响，CI 镜像常自带 /usr/bin/zstd，
+ * 此时多帧文件仍走外部解压——这是正确行为，Windows 镜像则全世界没有 zstd）。
  */
 console.log('\n[7] 无 zstd CLI 时仍能解 dsh');
 {
@@ -1167,19 +1169,46 @@ console.log('\n[7] 无 zstd CLI 时仍能解 dsh');
     console.log('  – 跳过（无 dsh fixture 或该 Node 无内置 zstd，只能靠外部 CLI）');
   } else {
     const { collectDshFile } = await import(pathToFileURL(join(ROOT, 'src/collectors/dsh.js')).href);
-    const events = [];
-    const stub = { insertEvent: (e) => { events.push(e); return 1; }, insertToolCall: () => 1 };
-    const fixture = join(HOME, '.dsh/sessions/--work-projI--/s-dsh-v3/session.v3.jsonl.zstd');
+    const mkStub = () => { const ev = []; return { ev, store: { insertEvent: (e) => { ev.push(e); return 1; }, insertToolCall: () => 1 } }; };
+
+    // 单帧文件：内置 zstd 单帧能力足够，任何平台（含无 zstd 的 Windows 镜像）都必须解出。
+    // 压缩负载里碰巧出现的帧魔数不得误判成多帧（Windows CI 真实发生过）。
+    // 夹具放在扫描根之外：这里只做单元级 collect，不能让后续层再把它扫进库污染黄金数字。
+    const sfDir = join(HOME, '..', 'tw-sf-fixture');
+    mkdirSync(sfDir, { recursive: true });
+    const sfNow = Date.now();
+    writeFileSync(join(sfDir, 'session.v3.jsonl.zstd'), zlib.zstdCompressSync(Buffer.from([
+      JSON.stringify({ type: 'session', seq: 1, time: sfNow - 25000, cwd: '/work/projK' }),
+      JSON.stringify({ type: 'assistant/message', seq: 2, time: sfNow - 24000,
+        data: { usage: { inputTokens: 300, outputTokens: 40, cacheReadTokens: 200, cacheWriteTokens: 10 },
+          message: { source: { model: 'Dsh-Sf-Model' } } } }),
+    ].join('\n') + '\n')));
+    const sf = mkStub();
+    let sfErr = null;
     const savedPath = process.env.PATH;
     process.env.PATH = '';   // launchd 环境：CLI 一律找不到
-    let err = null;
-    try {
-      await collectDshFile(stub, { path: fixture, fileId: 's-dsh-v3' });
-    } catch (e) { err = e; }
+    try { await collectDshFile(sf.store, { path: join(sfDir, 'session.v3.jsonl.zstd'), fileId: 's-dsh-sf' }); }
+    catch (e) { sfErr = e; }
     finally { process.env.PATH = savedPath; }
-    ok('PATH 里没有 zstd 也不抛错', !err, String(err?.message));
-    ok('PATH 里没有 zstd 也能解出用量', events.length === 1 && events[0].total_tokens === 1480,
-      JSON.stringify(events));
+    ok('PATH 里没有 zstd 时单帧文件不抛错', !sfErr, String(sfErr?.message));
+    ok('PATH 里没有 zstd 时单帧文件解出用量（内置解压）',
+      sf.ev.length === 1 && sf.ev[0].total_tokens === 550 && sf.ev[0].model === 'dsh-sf-model',
+      JSON.stringify(sf.ev));
+
+    // 多帧文件（dsh 真实写入形态）：环境里有任一外部 zstd（含绝对路径回落）→ 必须全量
+    // 解出；全世界都没有 zstd（Windows 镜像）→ 宁可大声失败的可操作报错。两者都对。
+    const mf = mkStub();
+    let mfErr = null;
+    process.env.PATH = '';
+    try { await collectDshFile(mf.store, { path: join(HOME, '.dsh/sessions/--work-projI--/s-dsh-v3/session.v3.jsonl.zstd'), fileId: 's-dsh-v3' }); }
+    catch (e) { mfErr = e; }
+    finally { process.env.PATH = savedPath; }
+    if (mfErr) {
+      ok('无任何 zstd 时多帧文件大声失败（可操作提示）', /多个 zstd 帧/.test(String(mfErr.message)), String(mfErr.message));
+    } else {
+      ok('系统默认 PATH 下多帧 dsh 仍解出用量（外部/绝对路径 zstd）',
+        mf.ev.length === 1 && mf.ev[0].total_tokens === 1480, JSON.stringify(mf.ev));
+    }
   }
 }
 
@@ -1284,7 +1313,9 @@ console.log('\n[9] LaunchAgent 生成');
   }
 
   const entry = entryScript();
-  ok('入口脚本解析到真实存在的文件', existsSync(entry) && entry.endsWith('bin/tokenwatcher.js'), entry);
+  // Windows 上路径分隔符是反斜杠，按段比较而不是字符串后缀
+  ok('入口脚本解析到真实存在的文件',
+    existsSync(entry) && entry.replaceAll('\\', '/').endsWith('bin/tokenwatcher.js'), entry);
 
   // 装卸服务与数据无关。若排在 new Store 之后，仅仅装个开机自启就会在用户机器上
   // 建出数据库文件——这种副作用没人会想到要去测，只能靠顺序锁住。

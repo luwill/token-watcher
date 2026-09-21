@@ -11,6 +11,7 @@ polling, cost estimation with reconciliation, and a macOS menu-bar capsule.
 Zero runtime dependencies. Fully local.
 
 [![npm version](https://img.shields.io/npm/v/token-watcher)](https://www.npmjs.com/package/token-watcher)
+[![CI](https://github.com/luwill/token-watcher/actions/workflows/test.yml/badge.svg)](https://github.com/luwill/token-watcher/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%F0%9F%92%BB%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)](#运行要求)
 

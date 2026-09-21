@@ -51,9 +51,16 @@ async function decompress(path) {
   }
   if (typeof zlib.zstdDecompressSync === 'function') {
     const buf = await readFile(path);
-    // 魔数可能在压缩数据里偶然出现，所以这个判定只会高估帧数——方向是安全的：
-    // 判成多帧最多是多要求一次外部 zstd，绝不会把多帧文件当单帧而截断。
-    if (buf.indexOf(ZSTD_MAGIC, 1) === -1) return zlib.zstdDecompressSync(buf).toString('utf8');
+    // 魔数可能只是压缩负载里的巧合（Windows CI 上真实发生过：夹具解出的压缩字节里
+    // 碰巧含帧魔数，被当成多帧后整源拒绝）。只有"以该位置为界、前缀本身能完整解压"
+    // 才是真帧边界——真多帧文件的第一帧必然完整，截断的帧必然解压失败。
+    let multi = false;
+    let idx = buf.indexOf(ZSTD_MAGIC, 1);
+    while (idx !== -1) {
+      try { zlib.zstdDecompressSync(buf.subarray(0, idx)); multi = true; break; } catch { /* 巧合魔数，继续找 */ }
+      idx = buf.indexOf(ZSTD_MAGIC, idx + 1);
+    }
+    if (!multi) return zlib.zstdDecompressSync(buf).toString('utf8');
     throw new Error(`${path} 含多个 zstd 帧，Node 内置实现只能解第一帧。请安装 zstd：brew install zstd`);
   }
   throw new Error('zstd 不可用：PATH 与常见安装路径下均无 zstd，请执行 brew install zstd');
