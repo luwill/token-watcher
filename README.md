@@ -54,7 +54,7 @@ spend so you can see when the estimate drifts.
 | Claude Code | `~/.claude/projects` | Per-request tokens, model mix |
 | ccmr (claude-code-model-router) | `~/.claude-gateway/projects` | Same, with real model names behind the router |
 | Codex | `~/.codex/sessions` | Per-request tokens, **official quota % and resets** (5h / weekly), models incl. auto-review, tool calls |
-| ZCode | `~/.zcode/cli/db/db.sqlite` | Per-request details, tool calls, **GLM Coding Plan credit windows** (5h / monthly, official API) |
+| ZCode | `~/.zcode/cli/db/db.sqlite` | Per-request details, tool calls, **GLM Coding Plan credit windows** (5h / weekly, official API) |
 | dsh (DeepSeek Harness) | `~/.dsh/sessions` | Per-request details (multi-frame zstd snapshots) |
 | WorkBuddy | `~/.WorkBuddy/projects` | Per-request details + **self-learned credit rates** |
 | Grok Build | `~/.grok/sessions` | Per-turn usage (incl. vendor cost scale), tool calls |

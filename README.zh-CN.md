@@ -15,7 +15,7 @@
 | Claude Code | `~/.claude/projects` | 逐请求 token 明细、模型分布 |
 | ccmr（claude-code-model-router） | `~/.claude-gateway/projects` | 同上（国产模型隔离目录，真实模型名） |
 | Codex | `~/.codex/sessions`、`archived_sessions` | token 明细、**官方配额百分比与重置时间**（5 小时 / 每周窗口）、模型（含 auto-review 子代理）、工具调用 |
-| ZCode | `~/.zcode/cli/db/db.sqlite` | 逐请求明细（model_usage 表）、工具调用、**GLM Coding Plan 积分窗口**（5 小时 / 月度，官方端点） |
+| ZCode | `~/.zcode/cli/db/db.sqlite` | 逐请求明细（model_usage 表）、工具调用、**GLM Coding Plan 积分窗口**（5 小时 / 每周，官方端点） |
 | dsh（DeepSeek Harness） | `~/.dsh/sessions` | 逐请求明细（zstd 压缩会话） |
 | WorkBuddy | `~/.WorkBuddy/projects` | 逐请求明细 + **积分费率自学习**（credit 账本 × token 最小二乘） |
 | Grok Build | `~/.grok/sessions` | 轮次用量明细（含厂商侧成本刻度）、工具调用 |
@@ -230,11 +230,11 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 ### 1.7.0（2026-09-21）
 
 - **GLM Coding Plan 官方配额**：ZCode 凭证直连官方 monitor 端点（`/api/monitor/usage/quota/limit`），
-  面板新增「GLM Coding Plan」卡：5 小时 / 月度两个积分窗口的已用百分比、进度条与重置倒计时，
+  面板新增「GLM Coding Plan」卡：5 小时 / 每周两个积分窗口的已用百分比、进度条与重置倒计时，
   积分明细（如 1,183 / 12,000）在悬浮提示里；套餐等级（如 Pro）作徽章。MCP 工具调用配额
   （1000 次/期）从 ZCode 本地日志读取（不出网），进 summary JSON（`quota.zcode.mcp`）
 - 窗口语义按实测归一：`percentage` 为已用百分比、`usage` 为总额度、`currentValue` 为已用、
-  `unit=3` 为 5 小时窗、`unit=6` 为月度窗；未验证过的 type/unit 组合如实显示原始值不硬贴标签
+  `unit=3` 为 5 小时窗、`unit=6` 为每周窗（重置落在固定周几）；未验证过的 type/unit 组合如实显示原始值不硬贴标签
 - 配额卡倒计时改紧凑格式（`3天 13:17` / `2:06:10`），紧凑卡 6 列布局下单行不再折行
 - 凭证纪律同 Claude 官方配额：API key 只在服务进程内使用，不入库、不进前端
 

@@ -16,10 +16,10 @@ import { HOME, isOffline } from './config.js';
  *   - usage = 窗口总额度（12000），currentValue = 已用（725），number ≠ 额度；
  *   - percentage = 已用百分比（725/12000 = 6%，不是剩余）；
  *   - nextResetTime = 毫秒时间戳；unit=3 实测为 5 小时窗（重置 ~3h 后），
- *     unit=6 实测为月度窗（重置落在下月 1 日）。
+ *     unit=6 实测为每周窗（重置落在固定周几，如周五；用户确认套餐即按周刷新）。
  * 窗口标签只贴本机验证过的组合，没见过的 type/unit 如实显示原始值，不硬猜
- * （竞品按 TOKENS_LIMIT 找窗口、注释 unit=6=每周——与本机 CREDIT_LIMIT/月度
- * 的实测都不同，不可照抄）。
+ * （竞品按 TOKENS_LIMIT 类型找窗口、与本机 CREDIT_LIMIT 不同；unit=6=每周与其一致，
+ * 曾因重置时间戳换算掉一位数误标"月度"，用户依套餐事实纠正）。
  *
  * 另有一个纯本地源：ZCode 自己轮询 MCP 调用配额并把完整响应写进
  * ~/.zcode/v2/logs/YYYY-MM-DD.log（"[usage-stats] 官方 MCP 额度响应"），
@@ -37,7 +37,7 @@ const MCP_MAX_AGE_MS = 6 * 60 * 60_000;
 /** 本机实测过的窗口标签；key = `${type}:${unit}` */
 const WINDOW_LABELS = {
   'CREDIT_LIMIT:3': '5 小时',
-  'CREDIT_LIMIT:6': '月度',
+  'CREDIT_LIMIT:6': '每周',
 };
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };

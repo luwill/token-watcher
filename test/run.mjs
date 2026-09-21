@@ -1604,12 +1604,12 @@ console.log('\n[13] Claude 官方配额单元');
     { type: 'CREDIT_LIMIT', unit: 6, number: 1, usage: 60000, currentValue: 28918, remaining: 31081, percentage: 48, nextResetTime: 1790310756997 },
   ] } };
   const zn = zq.normalizeZcodeQuota(REAL_BODY);
-  ok('zcode 配额归一化：实测窗口（5 小时 6% / 月度 48%）与积分数值',
+  ok('zcode 配额归一化：实测窗口（5 小时 6% / 每周 48%）与积分数值',
     zn?.windows?.length === 2
     && zn.windows[0].label === '5 小时' && zn.windows[0].used_percent === 6
     && zn.windows[0].used === 725 && zn.windows[0].total === 12000
     && zn.windows[0].resets_at === 1790011302789
-    && zn.windows[1].label === '月度' && zn.windows[1].used_percent === 48 && zn.level === 'pro',
+    && zn.windows[1].label === '每周' && zn.windows[1].used_percent === 48 && zn.level === 'pro',
     JSON.stringify(zn));
   ok('zcode 没见过的窗口组合如实标注 unit（不硬贴标签）',
     zq.normalizeZcodeQuota({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 9, percentage: 3 }] } })
