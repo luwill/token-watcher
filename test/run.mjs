@@ -102,6 +102,13 @@ console.log('\n[2] 静态断言');
   ok('会话钻取曲线仍是无图元折线', /symbol:\s*'none'/.test(sessFn));
   ok('无图元折线用 axis 触发悬浮框（否则永远不弹）', /trigger:\s*'axis'/.test(sessFn));
 
+  // 横向条形图的数据数组做了 reverse，tooltip 却按原序数组取下标——悬停 A 条显示 B 条的
+  // 次数（实测 304 次调用张冠李戴）。修复后两处都必须从反转后的 rows 取
+  ok('模型 Top10 悬浮次数取反转后的 rows（不再张冠李戴）',
+    /rows\[p\.dataIndex\]\.n\} 次调用/.test(app), 'renderModel formatter');
+  ok('工具调用榜悬浮明细同样取 rows',
+    /const t = rows\[p\.dataIndex\]\?\.tools \|\| \{\}/.test(app), 'renderToolActivity formatter');
+
   // 后端 500 时旧 load() 会在 render() 里抛 TypeError，页面静默停在旧数据上
   const loadFn = app.match(/async function load\([\s\S]*?\n\}/)?.[0] || '';
   ok('load() 处理请求失败', /catch|res\.ok/.test(loadFn), loadFn.slice(0, 60));

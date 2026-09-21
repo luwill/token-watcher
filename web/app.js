@@ -390,7 +390,7 @@ async function renderToolActivity() {
       grid: { left: 150, right: 40, top: 10, bottom: 30 },
       tooltip: chartTooltip('toolsAct', {
         formatter: (p) => {
-          const t = tools[p.dataIndex]?.tools || {};
+          const t = rows[p.dataIndex]?.tools || {};
           const src = Object.entries(t).map(([k, v]) => `${TOOL_LABEL[k] || k} ${v}`).join(' · ');
           return `${esc(p.name)}<br/>${p.value} 次调用<br/><span style="color:#8a8aa0">${esc(src)}</span>`;
         },
@@ -579,7 +579,7 @@ function renderModel(byModel) {
     animationDuration: 300,
     grid: { left: 130, right: 40, top: 10, bottom: 30 },
     tooltip: chartTooltip('model', {
-      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${byModel[p.dataIndex].n} 次调用`,
+      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${rows[p.dataIndex].n} 次调用`,
     }),
     xAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
     yAxis: { type: 'category', data: rows.map(r => r.model || '(未知)'), axisLabel: { color: '#c7c7d8', fontSize: 11 } },
