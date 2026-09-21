@@ -97,6 +97,7 @@ Homebrew: `brew install luwill/token-watcher/token-watcher`
 token-watcher today [--json|--light]            # today's usage (machine-readable / pure ASCII)
 token-watcher sessions --day 2026-09-20 [--csv] [--git]   # per-session stats (+ git commit attribution)
 token-watcher wrapped [--year 2026] [--json]    # year in review
+token-watcher roi [--json]                     # subscription ROI (API-equivalent vs paid)
 token-watcher doctor                            # environment + store + per-source health
 token-watcher uninstall [--purge-data] [--yes]  # remove all local traces
 token-watcher --version
@@ -109,9 +110,34 @@ token-watcher --version
 - **Dashboard**: metric cards, year-long GitHub-style heatmap (daily/weekly/cumulative), by-day/model/tool charts, live request feed
 - **Session drill-down**: click any day → sessions (peak-context estimate) → per-request token curve
 - **Quotas**: Codex official (direct-read), Claude official (local OAuth token → official usage endpoint; falls back to 5h window estimation)
+- **Subscription ROI**: this month's API-equivalent cost vs what you actually pay (configure prices in `~/.tokenmeter/subscriptions.json`; `token-watcher roi`)
 - **Balances & costs**: DeepSeek/Kimi balance polling; LiteLLM pricing with per-model CNY conversion; **balance reconciliation**; Qoder credits ledger
 - **Health self-check**: parse errors turn red, "file being written but no new events" turns yellow — silent format drift gets caught
 - **Exports & backups**: CSV, session/annual CLI reports, daily `VACUUM INTO` snapshots (7 kept)
+
+### Subscription ROI
+
+Edit `~/.tokenmeter/subscriptions.json` with what you actually pay (one entry
+per tool, `price_cny` or `price_usd`):
+
+```json
+{ "monthly": {
+    "claude-code": { "name": "Claude Max", "price_usd": 200 },
+    "kimi":        { "name": "Kimi plan",  "price_cny": 49 },
+    "glm":         { "tool": "zcode", "models": "glm", "name": "GLM Coding Plan", "price_cny": null },
+    "minimax":     { "tool": "zcode", "models": "minimax", "name": "MiniMax (via ZCode)", "price_cny": null } } }
+```
+
+Entry keys are identifiers; `tool` selects the data source (needed when one
+tool carries multiple subscriptions, e.g. GLM and MiniMax both flowing through
+ZCode), and `models` filters aggregation by model prefix. Entries with the
+price unset still show their API-equivalent, labeled "price not set".
+
+The dashboard and `token-watcher roi` then compare this month's API-equivalent
+cost (same pricing chain as the cost card, including peak/off-peak) against
+your real spend. Clearly labeled as a hypothetical caliber: subscriptions come
+with rate limits and API prices may be discounted. Credits-based tools (Qoder)
+show this month's credits spent instead of a made-up ratio.
 
 ## Privacy
 

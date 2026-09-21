@@ -6,6 +6,7 @@ import { extname, join, resolve, dirname } from 'node:path';
 import { WEB_DIR, ECHARTS_PATH, DB_PATH, isOffline, SOURCES } from './config.js';
 import { learnWorkbuddyRates } from './rates.js';
 import { loadPricing, computeCosts, computeRecon } from './pricing.js';
+import { computeRoi } from './roi.js';
 import { codexQuotaView } from './codexQuota.js';
 import { claudeUsageView, ClaudeUsagePoller } from './claudeUsage.js';
 import { CursorUsagePoller } from './cursorUsage.js';
@@ -216,6 +217,7 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
       return { ...q.data, ts: q.ts };
     })() },
     costs,
+    roi: await computeRoi(db, { rate: costs.usd_to_cny }),
     recon: computeRecon(db, store, await loadPricing(), { rate: costs.usd_to_cny }),
     recent,
   };

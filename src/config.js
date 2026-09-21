@@ -43,6 +43,7 @@ export const SOURCES = [
     kind: 'jsonl',
     collector: 'claude',
     version: 2, // v2: 提取 tool_use 工具调用
+    subscription: true,
   },
   {
     tool: 'ccmr',
@@ -62,6 +63,7 @@ export const SOURCES = [
     kind: 'jsonl',
     collector: 'codex',
     version: 3, // v3: state 记录 parent_thread_id（resume 链模型继承）
+    subscription: true,
   },
   {
     tool: 'zcode',
@@ -70,6 +72,7 @@ export const SOURCES = [
     kind: 'sqlite',
     collector: 'zcode',
     version: 2, // v2: 提取 tool_usage
+    subscription: true,
   },
   {
     tool: 'dsh',
@@ -92,6 +95,7 @@ export const SOURCES = [
     kind: 'jsonl',
     collector: 'grok',
     version: 1,
+    subscription: true,
   },
   {
     tool: 'workbuddy',
@@ -100,6 +104,7 @@ export const SOURCES = [
     kind: 'jsonl',
     collector: 'workbuddy',
     version: 1,
+    subscription: true,
   },
   {
     tool: 'pi',
@@ -126,8 +131,9 @@ export const SOURCES = [
             join(HOME, '.gemini', 'antigravity-ide', 'brain')],
     kind: 'jsonl',
     collector: 'antigravity',
-    version: 1,
+    version: 2, // v2: 权威/估算基线分离，修复混口径减法的 input 虚高（实时会话实测 4 倍），重扫补正
     match: (name) => name.startsWith('transcript') && name.endsWith('.jsonl'),
+    subscription: true,
   },
   {
     tool: 'kimi',
@@ -137,6 +143,7 @@ export const SOURCES = [
     collector: 'kimi',
     version: 1,
     match: (name) => name === 'wire.jsonl',
+    subscription: true,
   },
   {
     tool: 'qoder',
@@ -146,6 +153,7 @@ export const SOURCES = [
     kind: 'jsonl',
     collector: 'qoder',
     version: 1,
+    subscription: true,
   },
   {
     tool: 'cursor',
@@ -155,6 +163,7 @@ export const SOURCES = [
     kind: 'poller',
     collector: null,
     version: 1,
+    subscription: true,
   },
 ];
 

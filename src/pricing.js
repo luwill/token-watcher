@@ -87,6 +87,40 @@ function priceOf(model, table, rate) {
   return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate, offPeak };
 }
 
+/** 窗口费用聚合（供费用卡与订阅 ROI 共用：同一 priceOf 链路与峰谷判定） */
+export function aggregateCosts(db, since, { rate = 7.2, table = {} } = {}) {
+  const rows = db.prepare(`
+    SELECT tool, model, ${PEAK_SQL} AS peak, SUM(input_tokens) fi, SUM(cached_input) ci,
+           SUM(cache_write) cw, SUM(output_tokens) oi
+    FROM events WHERE ts >= ? GROUP BY tool, model, peak`).all(since);
+  const byModel = new Map(), byTool = new Map(), byToolModel = new Map(), unpriced = new Set();
+  let total = 0;
+  for (const r of rows) {
+    const tokens = (r.fi || 0) + (r.ci || 0) + (r.oi || 0);
+    if (tokens <= 0) continue;
+    const p = priceOf(r.model, table, rate);
+    if (!p) { unpriced.add(r.model); continue; }
+    const c = ((r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
+      + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny) * (r.peak ? 1 : p.offPeak);
+    total += c;
+    const m = byModel.get(r.model) || { model: r.model, cost_cny: 0, tokens: 0 };
+    m.cost_cny += c; m.tokens += tokens; byModel.set(r.model, m);
+    const t = byTool.get(r.tool) || { tool: r.tool, cost_cny: 0 };
+    t.cost_cny += c; byTool.set(r.tool, t);
+    // 订阅 ROI 的模型过滤维度：GLM 与 MiniMax 共用 ZCode 这类"一个工具多个套餐"的场景
+    const k = r.tool + '|' + r.model;
+    const g = byToolModel.get(k) || { tool: r.tool, model: r.model, cost_cny: 0 };
+    g.cost_cny += c; byToolModel.set(k, g);
+  }
+  return {
+    cny: total,
+    by_model: [...byModel.values()].sort((a, b) => b.cost_cny - a.cost_cny),
+    by_tool: [...byTool.values()].sort((a, b) => b.cost_cny - a.cost_cny),
+    by_tool_model: [...byToolModel.values()],
+    unpriced: [...unpriced],
+  };
+}
+
 export async function computeCosts(db, days = 30) {
   const pricing = await loadPricing();
   const fx = await Promise.race([
@@ -97,34 +131,7 @@ export async function computeCosts(db, days = 30) {
   const table = pricing.models || {};
   await Promise.race([ensurePrices().catch(() => {}), new Promise(r => setTimeout(r, 1500))]);
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-
-  const agg = (since) => {
-    const rows = db.prepare(`
-      SELECT tool, model, ${PEAK_SQL} AS peak, SUM(input_tokens) fi, SUM(cached_input) ci,
-             SUM(cache_write) cw, SUM(output_tokens) oi
-      FROM events WHERE ts >= ? GROUP BY tool, model, peak`).all(since);
-    const byModel = new Map(), byTool = new Map(), unpriced = new Set();
-    let total = 0;
-    for (const r of rows) {
-      const tokens = (r.fi || 0) + (r.ci || 0) + (r.oi || 0);
-      if (tokens <= 0) continue;
-      const p = priceOf(r.model, table, rate);
-      if (!p) { unpriced.add(r.model); continue; }
-      const c = ((r.fi / 1e6) * p.inCny + (r.ci / 1e6) * p.cacheCny
-        + (r.cw / 1e6) * p.cacheWCny + (r.oi / 1e6) * p.outCny) * (r.peak ? 1 : p.offPeak);
-      total += c;
-      const m = byModel.get(r.model) || { model: r.model, cost_cny: 0, tokens: 0 };
-      m.cost_cny += c; m.tokens += tokens; byModel.set(r.model, m);
-      const t = byTool.get(r.tool) || { tool: r.tool, cost_cny: 0 };
-      t.cost_cny += c; byTool.set(r.tool, t);
-    }
-    return {
-      cny: total,
-      by_model: [...byModel.values()].sort((a, b) => b.cost_cny - a.cost_cny),
-      by_tool: [...byTool.values()].sort((a, b) => b.cost_cny - a.cost_cny),
-      unpriced: [...unpriced],
-    };
-  };
+  const agg = (since) => aggregateCosts(db, since, { rate, table });
 
   const all = agg(0);
   const today = agg(dayStart.getTime());

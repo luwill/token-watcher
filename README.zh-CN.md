@@ -143,6 +143,7 @@ token-watcher sessions --day 2026-09-20            # 会话级统计（JSON）
 token-watcher sessions --from 2026-09-01 --to 2026-09-30 --csv --out s.csv
 token-watcher sessions --day 2026-09-20 --git      # 每个会话挂上窗口内的 git 提交（产出归因）
 token-watcher wrapped [--year 2026] [--json]       # 年度报告（全年/最猛一天/连续天数/项目 Top）
+token-watcher roi [--json]                     # 订阅 ROI（本月 API 等值 vs 实付）
 token-watcher doctor              # 环境与数据源体检（node 版本/zstd/库完整性/逐源健康）
 token-watcher uninstall           # 摘除开机自启等本机痕迹
 token-watcher uninstall --purge-data --yes         # 连 ~/.tokenmeter 数据目录一起删（不可恢复）
@@ -178,6 +179,7 @@ token-watcher --version
 - **配额**：Codex 官方配额直读（百分比/重置倒计时）、**Claude 官方配额**（复用 Claude Code
   本地 OAuth 凭证调官方用量端点，5 小时窗/周窗/模型专属周额度；无凭证时自动回落 5h 窗口推算）
   Statuspage 公开接口，5 分钟刷新；厂商挂没挂一眼可辨）
+- **订阅 ROI**：本月 API 等值 vs 订阅实付（`token-watcher roi`，月费在 subscriptions.json 配置）
 - **积分账本**：Qoder 积分消耗卡（今日/累计，官方 credits 直读）
 - **余额与费用**：DeepSeek/Kimi 余额轮询（读 `~/.ccmr/.env` 的 key，密钥不出后端）；ccmr 侧按官方牌价折算（`~/.tokenmeter/pricing.json` 可编辑）+ 余额对账
 - **阈值通知**（菜单栏 App）：Codex ≥80%/95%、余额 <¥10/¥2 弹 macOS 通知，级别上升只提醒一次
@@ -223,6 +225,19 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 - i18n / 英文 README
 
 ## 更新日志
+
+### 1.6.0（2026-09-21，待发布）
+
+- **新增订阅 ROI**：回答"我这个月 ¥X 的订阅值不值"。配置 `~/.tokenmeter/subscriptions.json`
+  的月费后，面板出"订阅 ROI（本月）"卡、CLI 出 `token-watcher roi [--json]`：逐订阅对比
+  本月 **API 等值成本**（与费用卡同一条链路：pricing.json > LiteLLM×汇率 + 峰谷）与
+  **订阅实付**（price_cny / price_usd 二选一）。比值 ×N≥1 标"划算"；积分制工具（Qoder）
+  如实显示本月积分消耗、不硬造比值；卡片明确标注假设性口径（订阅含速率限制、API 可能
+  有折扣价）。未配置时若订阅制工具本月已有花费，显示引导卡与本月等值合计
+- 配置格式：`{"monthly": {"claude-code": {"name": "Claude Max", "price_usd": 200},
+  "kimi": {"name": "Kimi 会员", "price_cny": 49}}}`（默认键为工具 id）。两个进阶字段：
+  `tool` 指定数据源 id（同一工具可拆多条订阅——GLM 与 MiniMax 的用量都落在 zcode 下）；
+  `models` 按模型前缀过滤聚合范围。月费未填的条目仍显示 API 等值并标"月费未填"
 
 ### 1.5.1（2026-09-21，待发布）
 

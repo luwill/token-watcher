@@ -15,7 +15,10 @@ import { normalizeModel } from '../models.js';
  *   - 输入 = 真实上下文增量：gen_metadata 的 protobuf（字段 1 → 9 → 10 → 1）带该轮的
  *     contextTokens（含系统提示与技能清单，transcript 里没有，按内容估会严重偏低），
  *     相邻两次 planner 的上下文差即新输入（防 O(N²) 重复计整段历史）；无 db 行时回落
- *     字符估算；换模型时 prevCtx 清零（新会话基线）；
+ *     字符估算；换模型时基线清零（缓存冷，新会话基线）；
+ *     权威与估算两条基线必须分开推进——两者差着系统提示与截断内容，混在同一次减法里
+ *     会把"估算小于权威"钳成 0、把"权威减旧估算"放大成整段上下文（2026-09 实测主会话
+ *     input 因此虚高 4 倍）；
  *   - 输出/思维链 = 字符估算（CJK×1 + 其他×¼），上游不落 token 数，这是本地可得的最优口径；
  *   - 模型：db 字段 19 > 用户切换消息 > variant 根目录 settings.json 默认值。
  *
@@ -190,10 +193,12 @@ export function sessionUuidOf(transcriptPath) {
 /* ---------- 采集主流程 ---------- */
 
 export async function collectAntigravityFile(store, { tool, path, fileId, offset, state, version }) {
-  let st = state ?? { ctx: 0, prevCtx: 0, model: null, lastPlannerModel: null, pending: [], seen: [] };
+  let st = state ?? { ctx: 0, prevAuth: 0, prevEst: 0, model: null, lastPlannerModel: null, pending: [], seen: [] };
   st._v = version;
   st.pending ??= [];
   st.seen ??= [];
+  st.prevAuth ??= 0;
+  st.prevEst ??= 0;
   let inserted = 0;
   // 上游会把历史行重放/重写进 transcript（实测同一段 step 整块出现两遍）。重放行若照常
   // 处理会双重 inflate 上下文、且差分出的 input=0 会经补正通道覆盖原计费——必须整体跳过。
@@ -216,17 +221,23 @@ export async function collectAntigravityFile(store, { tool, path, fileId, offset
   // 补正上一轮按估算入账的事件：权威 contextTokens 到位后原地 UPDATE。
   // 语句统一：total 用库里的 output/reasoning 重算（SQLite 的 SET 右值取旧行列，
   // 不会受同行 input 赋值影响）。
+  // 条目按 step 升序解析并链式推进权威基线：连续多个估算轮的增量各自归位，
+  // 不会都从同一个旧基线重复扣减。
   const updAuthentic = store.db.prepare(
     'UPDATE events SET input_tokens = ?, total_tokens = ? + output_tokens + reasoning_tokens WHERE dedup_key = ?');
   if (st.pending.length && stepMap) {
-    for (let i = st.pending.length - 1; i >= 0; i--) {
+    let pm = null;
+    for (let i = 0; i < st.pending.length; i++) {
       const p = st.pending[i];
       const info = stepMap.get(p.step);
       if (!info || !(info.contextTokens > 0)) continue;
-      // 该轮新输入 = 权威上下文 - 计费时的基线（与实时路径同式）
-      const newInput = Math.max(0, info.contextTokens - p.prevCtx);
+      const m = info.model || null;
+      if (pm && m && m !== pm) st.prevAuth = 0; // 换模型：缓存冷，基线清零
+      const newInput = Math.max(0, info.contextTokens - st.prevAuth);
       updAuthentic.run(newInput, newInput, p.key);
-      st.pending.splice(i, 1);
+      st.prevAuth = info.contextTokens;
+      pm = m;
+      st.pending.splice(i, 1); i--;
     }
   }
 
@@ -259,10 +270,22 @@ export async function collectAntigravityFile(store, { tool, path, fileId, offset
     st.ctx += estStep(r); // 先把本步自身产出计入历史（下一轮的上下文含本轮响应）
     if (!Number.isFinite(ts)) return;
 
-    // 权威上下文覆盖估算累计（含 transcript 里没有的系统提示与技能清单）
-    const ctx = info?.contextTokens > 0 ? info.contextTokens : st.ctx - estStep(r);
-    if (st.lastPlannerModel && st.model && st.model !== st.lastPlannerModel) st.prevCtx = 0;
-    const input = Math.max(0, ctx - st.prevCtx);
+    if (st.lastPlannerModel && st.model && st.model !== st.lastPlannerModel) {
+      st.prevAuth = 0; st.prevEst = 0; // 换模型：缓存冷，两条基线都按新会话重立
+    }
+
+    // 两条基线各自同口径相减：权威链（gen db 的 contextTokens，含系统提示）与
+    // 估算链（transcript 字符估算）差着一个系统量级，混减会产生 0 或整段上下文
+    let input, billedCtx, auth;
+    if (info?.contextTokens > 0) {
+      auth = true;
+      billedCtx = info.contextTokens;
+      input = Math.max(0, billedCtx - st.prevAuth);
+    } else {
+      auth = false;
+      billedCtx = st.ctx - estStep(r);
+      input = Math.max(0, billedCtx - st.prevEst);
+    }
     const output = estValue(r.content) + estValue(r.tool_calls);
     const reasoning = estValue(r.thinking);
     const total = input + output + reasoning;
@@ -286,12 +309,14 @@ export async function collectAntigravityFile(store, { tool, path, fileId, offset
     inserted += n;
     // 全量重放（版本升级触发）时 dedup 命中旧行：若本次拿到权威 db 值，就地把旧估算补正
     if (n === 0 && info) updAuthentic.run(input, input, key);
-    st.prevCtx = ctx;
-    st.lastPlannerModel = st.model;
-    // 无权威 db 行的入账留待补正（有 50 条上限，防 state 无界增长）
-    if (!info && st.pending.length < 50 && input > 0) {
-      st.pending.push({ key, step: r.step_index, prevCtx: ctx - input });
+    if (auth) {
+      st.prevAuth = billedCtx;
+    } else {
+      st.prevEst = billedCtx;
+      // 无权威 db 行的入账留待补正（有 50 条上限，防 state 无界增长）
+      if (st.pending.length < 50 && input > 0) st.pending.push({ key, step: r.step_index });
     }
+    st.lastPlannerModel = st.model;
   });
 
   return { newOffset, inserted, state: st };

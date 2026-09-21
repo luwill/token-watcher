@@ -106,8 +106,12 @@ function render() {
 
 function renderStatus(quota, balances, rates, recon, costs, credits) {
   const host = document.getElementById('quota-extra');
+  const wide = document.getElementById('quota-wide');
   if (!host) return;
+  // 两个网格按内容密度分流：紧凑卡（配额/余额/积分）与明细宽卡（花费/ROI/费率）。
+  // 混在同一网格时行内高度差会全部变成矮卡底部的空白。
   let html = '';
+  let whtml = '';
 
   // Codex 配额：plus 有 5 小时 + 周两个窗口，pro 只有周窗口——逐个窗口各画一条
   const q = quota?.codex;
@@ -188,7 +192,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
     const chips = esc((costs.by_tool || []).slice(0, 4)
       .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · '));
     const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${esc(costs.unpriced.join(', '))}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
-    html += `<div class="quota-card">
+    whtml += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
         <span class="q-reset" title="${costs.fx_ts ? '汇率时间 ' + esc(new Date(costs.fx_ts).toLocaleString('zh-CN')) : ''}">USD×${esc(costs.usd_to_cny)}${costs.fx_source === 'manual' ? '' : ' ·实时'}</span></div>
       <div class="q-meta" style="margin-top:2px">
@@ -214,20 +218,58 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
     </div>`;
   }
 
+  // 订阅 ROI：本月 API 等值 vs 实付（假设性口径，标注清楚）
+  const roi = lastSummary?.roi;
+  if (roi?.configured && roi.entries.length) {
+    const rows = roi.entries.map(e => {
+      const api = e.credits != null && e.api_cny <= 0
+        ? `积分 ${e.credits.toFixed(1)}`
+        : `API 等值 ¥${e.api_cny < 0.01 ? e.api_cny.toFixed(4) : e.api_cny.toFixed(2)}`;
+      const badge = e.paid_cny == null ? '<span class="dim">月费未填</span>'
+        : e.ratio == null ? '<span class="dim">—</span>'
+        : e.ratio >= 1 ? `<b style="color:var(--codex)">×${e.ratio.toFixed(1)} 划算</b>`
+        : `<b style="color:#e0b34c">×${e.ratio.toFixed(1)}</b>`;
+      const paid = e.paid_cny == null ? '' : ` / 月费 ¥${e.paid_cny.toFixed(0)}`;
+      return `<div class="q-meta" style="margin-top:4px">
+        <span>${esc(e.name)}</span>
+        <span class="dim">${api}${paid}　${badge}</span>
+      </div>`;
+    }).join('');
+    whtml += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">订阅 ROI（本月）</span>
+        <span class="q-plan cc">假设性口径</span></div>
+      ${rows}
+      <div class="recon dim" style="margin-top:4px">API 等值 ≠ 订阅价值：订阅含速率限制，API 可能有折扣价</div>
+    </div>`;
+  } else if (roi?.hint) {
+    whtml += `<div class="quota-card">
+      <div class="quota-head"><span class="q-title">订阅 ROI</span><span class="q-reset">未配置</span></div>
+      <div class="q-meta" style="margin-top:2px">
+        <span>本月订阅工具 API 等值 ¥${roi.hint.sub_tools_api_cny.toFixed(2)}</span>
+      </div>
+      <div class="recon dim">配置 ~/.tokenmeter/subscriptions.json 的月费后显示 ROI（格式见 README）</div>
+    </div>`;
+  }
+
   // WorkBuddy 费率
   if (rates?.length) {
     const rows = rates.map(r => `<tr>
       <td>${esc(r.model)}</td><td>${r.fresh_rate.toFixed(1)}</td>
       <td class="dim">${r.cache_rate.toFixed(1)}</td><td>${r.out_rate.toFixed(1)}</td><td class="dim">${r.turns}</td>
     </tr>`).join('');
-    html += `<div class="quota-card rates-card">
+    const lastUp = Math.max(...rates.map(r => r.updated_at || 0));
+    const updLine = lastUp > 0
+      ? `<div class="recon dim">traceId 余额对账自学习 · 最近更新 ${new Date(lastUp).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : '';
+    whtml += `<div class="quota-card rates-card">
       <div class="quota-head"><span class="q-title">WorkBuddy 积分费率（自学习）</span>
         <span class="q-reset">积分/百万 token</span></div>
       <table class="rates-table"><thead><tr><th>模型</th><th>输入</th><th>缓存</th><th>输出</th><th>样本</th></tr></thead>
       <tbody>${rows}</tbody></table>
+      ${updLine}
     </div>`;
   }
   host.innerHTML = html;
+  if (wide) wide.innerHTML = whtml;
 }
 
 /** 按天花费（模型堆叠柱形图） */

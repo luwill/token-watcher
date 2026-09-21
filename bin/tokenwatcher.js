@@ -49,7 +49,7 @@ function installDaemonGuards() {
 }
 
 const COMMANDS = [
-  'scan', 'serve', 'today', 'sessions', 'wrapped', 'doctor',
+  'scan', 'serve', 'today', 'sessions', 'wrapped', 'roi', 'doctor',
   'install-agent', 'uninstall-agent', 'uninstall', 'bar',
 ];
 
@@ -88,6 +88,7 @@ const BANNER = `token-watcher v${VERSION}
   sessions [--day D|--from F --to T] [--csv] [--git] [--out F]
                                    会话统计导出（--git 附 git 提交归因）
   wrapped [--year Y] [--json]      年度报告
+  roi [--json]                     订阅 ROI（本月 API 等值 vs 实付）
   doctor                           环境与数据源体检
   install-agent / uninstall-agent  macOS 开机自启
   uninstall [--purge-data] [--yes] 摘除所有本机痕迹（数据默认保留）
@@ -204,6 +205,26 @@ if (cmd === 'scan') {
     ? opts.year : new Date().getFullYear();
   const w = buildWrapped(store.db, year);
   console.log(opts.json ? JSON.stringify(w, null, 2) : renderWrapped(w));
+  store.close();
+} else if (cmd === 'roi') {
+  const { computeRoi } = await import('../src/roi.js');
+  const r = await computeRoi(store.db);
+  if (opts.json) {
+    console.log(JSON.stringify(r, null, 2));
+  } else if (!r.configured) {
+    log(r.hint
+      ? `未配置订阅月费（~/.tokenmeter/subscriptions.json）；本月订阅工具 API 等值约 ¥${r.hint.sub_tools_api_cny}`
+      : '未配置订阅月费（~/.tokenmeter/subscriptions.json），格式见 README');
+  } else {
+    console.log(`订阅 ROI（本月，汇率 USD×${r.usd_to_cny}）`);
+    for (const e of r.entries) {
+      const api = e.credits != null && e.api_cny <= 0 ? `积分 ${e.credits.toFixed(1)}` : `API 等值 ¥${e.api_cny < 0.01 ? e.api_cny.toFixed(4) : e.api_cny.toFixed(2)}`;
+      const ratio = e.paid_cny == null ? '月费未填' : e.ratio == null ? '—' : `×${e.ratio.toFixed(1)}`;
+      const paid = e.paid_cny == null ? ''.padEnd(13) : `月费 ¥${e.paid_cny.toFixed(2)}`.padEnd(13);
+      console.log(`${String(e.name).padEnd(16)} ${api.padEnd(16)} ${paid} ${ratio}`);
+    }
+    console.log('口径：API 等值为假设性折算（订阅含速率限制、API 可能有折扣价），仅作参考');
+  }
   store.close();
 } else if (cmd === 'doctor') {
   const { doctorCommand } = await import('../src/doctor.js');

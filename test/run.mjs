@@ -343,7 +343,7 @@ console.log('\n[3] 端到端冒烟（临时 HOME + fixtures）');
 const HOME = mkdtempSync(join(tmpdir(), 'tokenmeter-test-'));
 const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
 let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随之放行
-let ATY_GOLD = 0, ATY_FINAL = 0; // antigravity 黄金数字（估算口径，夹具块内计算）
+let ATY_GOLD = 0, ATY_FINAL = 0, ATY_U3_ESTIN = 0; // antigravity 黄金数字（估算口径，夹具块内计算）
 {
   // ---- fixtures（时间戳用"现在"附近，避免健康检查把过去时间的 fixture 判为 stale）----
   const NOW = Date.now();
@@ -572,7 +572,28 @@ let ATY_GOLD = 0, ATY_FINAL = 0; // antigravity 黄金数字（估算口径，�
   ]);
   writeFileSync(join(HOME, '.gemini/antigravity/brain/u2-anty/.system_generated/logs/other.jsonl'), '{}');
   const ATY_EST_U2 = est('d'.repeat(100)) + est('e'.repeat(80));
-  ATY_GOLD = 23986 + 1727 + est(A1_TC) + est(A3_C) + est(A3_TH) + ATY_EST_U2;
+  // u3：权威→估算→权威三明治。中间轮无 db 行按估算链计费；后一个权威轮必须回到
+  // 权威链差分（12000-10000=2000），绝不能拿权威值减上一轮的估算值（混口径曾把
+  // 实时会话 input 虚高 4 倍：负差钳 0 或整段上下文全额入账）
+  const A_U3_IN = 'x'.repeat(200);
+  const A_U3_TC = JSON.stringify([{ tool: 't', args: { c: 'y'.repeat(100) } }]);
+  const A_U3_G2 = 'z'.repeat(300), A_U3_P3 = 'w'.repeat(50), A_U3_P5 = 'q'.repeat(20);
+  const ATY_U3_ESTIN_V = est(A_U3_IN) + est(A_U3_TC) + est(A_U3_G2); // 估算轮的整条估算链（prevEst 从 0 起）
+  ATY_U3_ESTIN = ATY_U3_ESTIN_V;
+  w(join(HOME, '.gemini/antigravity-cli/brain/u3-anty/.system_generated/logs/transcript.jsonl'), [
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', created_at: ISO(15000), content: A_U3_IN }),
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', created_at: ISO(14000), content: '', tool_calls: JSON.parse(A_U3_TC) }),
+    JSON.stringify({ step_index: 2, type: 'GENERIC', created_at: ISO(13000), content: A_U3_G2 }),
+    JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', created_at: ISO(12000), content: A_U3_P3 }),
+    JSON.stringify({ step_index: 4, type: 'GENERIC', created_at: ISO(10000), content: 'v'.repeat(100) }),
+    JSON.stringify({ step_index: 5, type: 'PLANNER_RESPONSE', created_at: ISO(9000), content: A_U3_P5 }),
+  ]);
+  atyDb(join(HOME, '.gemini/antigravity-cli/conversations/u3-anty.db'), [
+    genRow({ model: 'gemini-3.8-flash', contextTokens: 10000, lastStepIndex: 0 }),
+    genRow({ model: 'gemini-3.8-flash', contextTokens: 12000, lastStepIndex: 4 }), // step5 没有 gen 行
+  ]);
+  const ATY_U3 = (10000 + est(A_U3_TC)) + (ATY_U3_ESTIN_V + est(A_U3_P3)) + (2000 + est(A_U3_P5));
+  ATY_GOLD = 23986 + 1727 + est(A1_TC) + est(A3_C) + est(A3_TH) + ATY_EST_U2 + ATY_U3;
   ATY_FINAL = ATY_GOLD - est('d'.repeat(100)) + 5000; // u2 补正后（见下方补正用例）
 
   // Kimi Code：workspaces.json（wd 目录 → 项目名）+ wire.jsonl（config.update 模型 +
@@ -632,6 +653,19 @@ let ATY_GOLD = 0, ATY_FINAL = 0; // antigravity 黄金数字（估算口径，�
       'deepseek-v4-pro': { currency: 'CNY', input_miss: 2000, input_hit: 0, output: 0 },
     },
   }));
+  // 订阅 ROI 夹具：codex 按美元月费（×测试汇率 7.0 = ¥70），qoder 人民币月费
+  writeFileSync(join(HOME, '.tokenmeter', 'subscriptions.json'), JSON.stringify({
+    _note: '说明字段应被忽略',
+    monthly: {
+      codex: { name: 'Codex plus', price_usd: 10 },
+      qoder: { name: 'Qoder Pro', price_cny: 50 },
+      gpt: { tool: 'codex', name: 'GPT 子集', models: 'gpt', price_cny: 1 },
+      glm: { tool: 'zcode', name: 'GLM Plan', models: 'glm', price_cny: 20 },
+      qwen: { tool: 'ccmr', name: 'Qwen', models: 'qwen', price_cny: 5 },
+      grokfree: { tool: 'grok', name: 'Grok', price_usd: null },
+    },
+  }));
+
 }
 
 // dsh 夹具是否落地，决定其黄金数字是否计入（无 zstd 时该源整体缺席）
@@ -719,12 +753,38 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
     hs.close();
     rmSync(hHome, { recursive: true, force: true });
   }
+  // 订阅 ROI：codex 本月 API 等值 = 唯一计价事件（fresh150/1e6×10 + cached100/1e6×2 + out30/1e6×30 = 0.0026）
+  {
+    const rj = cli(['roi', '--json']);
+    let rr = null;
+    try { rr = JSON.parse(rj.stdout); } catch { /* 断言会红 */ }
+    ok('roi --json 可解析且已配置', rj.status === 0 && rr?.configured === true, rj.stdout.slice(0, 120));
+    const cx = rr?.entries?.find(e => e.tool === 'codex');
+    const qd = rr?.entries?.find(e => e.tool === 'qoder');
+    ok('codex API 等值 0.0026 / 月费 72（USD×离线默认汇率 7.2）',
+      Math.abs((cx?.api_cny ?? -1) - 0.0026) < 1e-6 && cx?.paid_cny === 72, JSON.stringify(cx));
+    ok('qoder 积分制：本月积分 1.75、无硬造比值',
+      qd?.credits === 1.75 && qd?.ratio === null, JSON.stringify(qd));
+    const gpt = rr?.entries?.find(e => e.name === 'GPT 子集');
+    ok('模型过滤：codex 的 gpt 前缀条目 = 0.0026（与整工具等值，gpt-test 无峰谷抖动）',
+      Math.abs((gpt?.api_cny ?? -1) - 0.0026) < 1e-6 && gpt?.paid_cny === 1 && gpt?.models === 'gpt',
+      JSON.stringify(gpt));
+    const gl = rr?.entries?.find(e => e.name === 'GLM Plan');
+    ok('模型过滤命中未配价模型时如实为 0（glm-5.3 不在测试定价表）',
+      gl?.api_cny === 0 && gl?.paid_cny === 20, JSON.stringify(gl));
+    const qw = rr?.entries?.find(e => e.name === 'Qwen');
+    ok('模型过滤的排除性：ccmr 有花费但 qwen 前缀条目为 0',
+      qw?.api_cny === 0, JSON.stringify(qw));
+    const gf = rr?.entries?.find(e => e.name === 'Grok');
+    ok('月费未填的条目仍显示（paid_cny=null、无比值）',
+      gf?.paid_cny === null && gf?.ratio === null, JSON.stringify(gf));
+  }
   ok('qoder project 取 workspace-directories 的 cwd 末段',
     q("SELECT DISTINCT project FROM events WHERE tool='qoder'").every(r => r.project === 'projQ'));
   // Antigravity（估算口径）：权威 db 上下文 + 字符估算输出
   const atyEv = q("SELECT dedup_key, input_tokens, output_tokens, model FROM events WHERE tool='antigravity' ORDER BY ts");
   ok(`antigravity 总量 ${ATY_GOLD}`, byTool.antigravity?.t === ATY_GOLD, `${byTool.antigravity?.t} vs ${ATY_GOLD}`);
-  ok('antigravity 3 事件（两次权威 planner + 一次估算 planner）', byTool.antigravity?.n === 3, JSON.stringify(byTool.antigravity));
+  ok('antigravity 6 事件（u1 两权威 + u2 估算 + u3 三明治）', byTool.antigravity?.n === 6, JSON.stringify(byTool.antigravity));
   ok('antigravity 权威输入 23986 / 1727（上下文差分）',
     atyEv[0]?.input_tokens === 23986 && atyEv[1]?.input_tokens === 1727, JSON.stringify(atyEv));
   ok('antigravity 模型名归一（Gemini 3.8 Flash (Medium) → gemini-3.8-flash）',
@@ -732,8 +792,11 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
     JSON.stringify(atyEv.map(e => e.model)));
   ok('antigravity 无模型信息的事件如实留空（u2 走估算路径）',
     atyEv[2]?.model === null, JSON.stringify(atyEv[2]));
+  ok('antigravity 权威/估算基线不混用：三明治中间轮走估算链，后一权威轮回到权威差分 2000',
+    atyEv[3]?.input_tokens === 10000 && atyEv[4]?.input_tokens === ATY_U3_ESTIN && atyEv[5]?.input_tokens === 2000,
+    JSON.stringify(atyEv.slice(3).map(e => e.input_tokens)));
   ok('antigravity 非 transcript 的 jsonl 不入文件行',
-    q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 2);
+    q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 3);
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
   ok(`全源合计 ${36850 + ATY_GOLD + DSH_T}`, total === 36850 + ATY_GOLD + DSH_T, String(total));
 
@@ -744,7 +807,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok(`事件总数 ${19 + DSH_N}（幂等）`, n2 === 19 + DSH_N, String(n2));
+  ok(`事件总数 ${22 + DSH_N}（幂等）`, n2 === 22 + DSH_N, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -865,6 +928,7 @@ console.log('\n[4] API 冒烟');
     ok(`健康 ${hasDsh ? 12 : 11} 源 ok`, okTools === (hasDsh ? 12 : 11), `${okTools} ok`);
     ok('官方配额字段存在（无凭证时为 null，不编造）', 'claude_usage' in (s.quota || {}));
     ok('积分账本字段存在（qoder 1.75）', s.credits?.qoder?.total === 1.75, JSON.stringify(s.credits));
+    ok('summary 含订阅 ROI（6 条目）', s.roi?.configured === true && s.roi?.entries?.length === 6, JSON.stringify(s.roi?.entries?.map(e => e.tool)));
     ok('费用 by_day 有值（本地定价离线可算）', s.costs.by_day.length >= 1 && s.costs.today_cny >= 0);
 
     // 离线模式：不发任何外网请求，用本地缓存/手动汇率/种子价继续出数
@@ -1376,7 +1440,13 @@ console.log('\n[11] CLI 新命令');
     const f = read(formulaPath);
     ok('formula 直连 npm registry tarball', /registry\.npmjs\.org\/token-watcher\/-\/token-watcher-[\d.]+\.tgz/.test(f));
     ok('formula 依赖 node 并链接全部 bin', /depends_on "node"/.test(f) && /bin\.install_symlink/.test(f));
-    ok('formula 版本与 package.json 同步', new RegExp(`token-watcher-${pkg.version}\\.tgz`).test(f), pkg.version);
+    // formula 只在发版时回填 sha 与版本（update-formula.sh），开发期允许落后于
+    // package.json，但不得超前（超前 = 会发布一个不存在于 npm 的版本）
+    const fv = (f.match(/token-watcher-([\d.]+)\.tgz/) || [])[1];
+    const gt = (a, b) => a.split('.').some((x, i) => +x > +(b.split('.')[i] ?? 0))
+      && !b.split('.').some((x, i) => +x > +(a.split('.')[i] ?? 0));
+    ok('formula 版本不超前于 package.json（发版时 update-formula.sh 回填）',
+      fv && !gt(fv, pkg.version), `${fv} vs ${pkg.version}`);
     ok('update-formula.sh 随仓库提供', existsSync(join(ROOT, 'packaging/homebrew/update-formula.sh')));
   } else {
     ok('Homebrew formula 存在', false, formulaPath);

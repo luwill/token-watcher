@@ -53,6 +53,9 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 
 .quota-extra { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .quota-extra:empty { display: none; }
+/* 明细宽卡（花费/ROI/费率）：与紧凑卡分网格，避免行内高度差 140px+ 全变成卡内空白 */
+.quota-wide { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.quota-wide:empty { display: none; }
 .quota-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; }
 .quota-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
 .q-title { font-weight: 600; }
@@ -112,7 +115,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: t
 .badge.cursor { color: #f2cc8f; background: rgba(242,204,143,.12); }
 .badge.antigravity { color: #a9a3b8; background: rgba(109,104,117,.18); }
 
-.rates-card { grid-column: span 2; min-width: 0; }
+.rates-card { min-width: 0; }
 .rates-table { width: 100%; font-size: 12px; }
 .rates-table th { padding: 2px 8px; }
 .rates-table td { padding: 3px 8px; }
@@ -132,7 +135,7 @@ td { padding: 5px 8px; border-bottom: 1px solid #1d1d2a; font-variant-numeric: t
 
 footer { margin-top: 18px; font-size: 12px; }
 .dim { color: var(--dim); }
-@media (max-width: 980px) { .charts, .charts.two-col { grid-template-columns: 1fr; } .pair { grid-template-columns: 1fr; } .span2 { grid-column: span 1; } .quota { grid-template-columns: 1fr; } .rates-card { grid-column: span 1; } }
+@media (max-width: 980px) { .charts, .charts.two-col { grid-template-columns: 1fr; } .pair { grid-template-columns: 1fr; } .span2 { grid-column: span 1; } .quota { grid-template-columns: 1fr; } }
 
 .live-chip i { animation: pulse 1.6s infinite; }
 .live-chip b { color: #e6edf3; }
