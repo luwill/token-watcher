@@ -1536,14 +1536,19 @@ console.log('\n[12] serve 端口行为');
     { env: { ...env, TOKENMETER_PORT: String(base) }, stdio: ['ignore', 'pipe', 'pipe'] });
   let buf = '';
   child.stdout.on('data', (d) => { buf += d; });
-  const up = await new Promise(r => {
-    const t = setTimeout(() => r(false), 30_000);
-    const check = () => { if (buf.includes(`listening on http://127.0.0.1:${base + 1}`)) { clearTimeout(t); r(true); } };
+  // 从日志解析实际端口：Windows 的保留端口段可能让 base+1 也起不来，跳过是对的，
+  // 硬断言 base+1 会把正确行为判失败
+  const upPort = await new Promise(r => {
+    const t = setTimeout(() => r(null), 30_000);
+    const check = () => {
+      const m = buf.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
+      if (m) { clearTimeout(t); r(+m[1]); }
+    };
     child.stdout.on('data', check); check();
   });
-  ok('默认端口被占时自动落到下一端口', up, buf.slice(-200));
-  if (up) {
-    const res = await fetch(`http://127.0.0.1:${base + 1}/api/summary?days=1`);
+  ok('默认端口被占时自动落到下一可用端口', upPort !== null && upPort > base, buf.slice(-200));
+  if (upPort) {
+    const res = await fetch(`http://127.0.0.1:${upPort}/api/summary?days=1`);
     ok('递增端口上的面板可用', res.status === 200);
   }
   child.kill('SIGTERM');

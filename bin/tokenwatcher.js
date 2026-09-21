@@ -257,8 +257,10 @@ if (cmd === 'scan') {
     for (let p = port; p < port + 20; p++) {
       try { server = await tryListen(p); actualPort = p; break; }
       catch (err) {
-        if (err.code !== 'EADDRINUSE') { log(`listen 失败：${err.message}`); process.exit(1); }
-        log(`端口 ${p} 被占用，尝试 ${p + 1}…`);
+        // EADDRINUSE=被占；EACCES 多见于 Windows 的 Hyper-V/WinNAT 保留端口段——端口
+        // 看似空闲却禁止绑定（CI 的 windows runner 实测踩过）。自动模式下两者都继续找
+        if (err.code !== 'EADDRINUSE' && err.code !== 'EACCES') { log(`listen 失败：${err.message}`); process.exit(1); }
+        log(`端口 ${p} ${err.code === 'EADDRINUSE' ? '被占用' : '不可绑定（系统保留段）'}，尝试 ${p + 1}…`);
       }
     }
     if (!server) { log(`端口 ${port}-${port + 19} 都被占用，放弃`); process.exit(1); }
