@@ -166,14 +166,30 @@ agentKv blob 无用量字段。唯一权威来源是官方导出
   被修正数值的旧行会残留（新指纹另插）——已知边界，若 Cursor 未来提供行 id 再换。
 本机 546 行与 CSV 独立重算完全一致，重拉幂等。
 
-### Claude 官方配额（1.5.0 新增）
+### Claude 官方配额（1.5.0 新增；2026-09 适配接口改版）
 凭证：macOS 登录钥匙串（service `Claude Code-credentials`）/ Linux·Windows 的
 `~/.claude/.credentials.json`，payload 形如 `{claudeAiOauth:{accessToken,...}}`。
 端点 `GET api.anthropic.com/api/oauth/usage`（`anthropic-beta: oauth-2025-04-20`），
-返回 `five_hour`/`seven_day`/`seven_day_opus`/`weekly_scoped`，窗口主体用 `used_percent`，
-weekly_scoped 数组元素用 `percent` + `scope.model.display_name`（两种命名并存）。
-401 = token 过期（跑一次 claude 刷新），10 分钟轮询，快照 30 分钟内视为有效，无凭证
-静默跳过并回落 5h 推算卡。`TOKENMETER_NO_KEYCHAIN=1` 跳过钥匙串（测试环境用）。
+返回 `five_hour`/`seven_day`/`seven_day_opus` + scoped 周窗。**两种形状并存，归一化都认**：
+- 旧：窗口主体 `used_percent`，scoped 在顶层 `weekly_scoped[]`（元素用 `percent`）；
+- 新（2026-09 实测）：窗口主体 `utilization`，scoped 在 `limits[]` 数组
+  （`kind='weekly_scoped'`，带 `percent` + `scope.model.display_name` + `is_active`，
+  如 "Fable"）。
+结构不认识时返回 null（接口改版≠0%），前端回落 5h 推算卡。401 = token 过期
+（跑一次 claude 刷新），10 分钟轮询，快照 30 分钟内视为有效，无凭证静默跳过。
+`TOKENMETER_NO_KEYCHAIN=1` 跳过钥匙串（测试环境用）。官方卡（最多 3 窗）放宽卡网格。
+
+### ZCode / GLM Coding Plan 配额（1.7.0 新增）
+凭证：`~/.zcode/v2/config.json` 里启用的 `builtin:bigmodel/zai-coding-plan` provider
+自带明文 apiKey（无需解密 credentials.json）。端点 `GET {bigmodel.cn|api.z.ai}
+/api/monitor/usage/quota/limit`，headers 用裸 `authorization: <key>`（无 Bearer）。
+字段语义按实测：`percentage`=已用%、`usage`=窗口总额度、`currentValue`=已用、
+`number`≠额度；`unit=3`=5 小时窗、`unit=6`=每周窗（重置落固定周几）。标签只贴
+验证过的 `CREDIT_LIMIT:3/6`，其余组合如实显示 unit。team 版需要组织路由头，未实现
+不硬造。MCP 调用配额（1000 次/期）是纯本地源：`~/.zcode/v2/logs/*.log` 里
+`[usage-stats] 官方 MCP 额度响应` 行（6 小时新鲜窗，跨午夜看昨日），进 summary
+JSON 的 `quota.zcode.mcp`。陈旧度跟踪积分拉取时间：只有 MCP 日志更新时保留原快照
+ts，避免日志活跃把过期积分百分比刷成"新鲜"。离线跳过网络、日志照读。
 
 ## 计价：DeepSeek 的峰谷价
 

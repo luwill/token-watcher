@@ -232,11 +232,18 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 - **GLM Coding Plan 官方配额**：ZCode 凭证直连官方 monitor 端点（`/api/monitor/usage/quota/limit`），
   面板新增「GLM Coding Plan」卡：5 小时 / 每周两个积分窗口的已用百分比、进度条与重置倒计时，
   积分明细（如 1,183 / 12,000）在悬浮提示里；套餐等级（如 Pro）作徽章。MCP 工具调用配额
-  （1000 次/期）从 ZCode 本地日志读取（不出网），进 summary JSON（`quota.zcode.mcp`）
+  （1000 次/期）从 ZCode 本地日志读取（不出网），进 summary JSON（`quota.zcode.mcp`）；
+  快照陈旧度跟踪积分拉取时间，不会被活跃的本地日志刷成"新鲜"
 - 窗口语义按实测归一：`percentage` 为已用百分比、`usage` 为总额度、`currentValue` 为已用、
   `unit=3` 为 5 小时窗、`unit=6` 为每周窗（重置落在固定周几）；未验证过的 type/unit 组合如实显示原始值不硬贴标签
-- 配额卡倒计时改紧凑格式（`3天 13:17` / `2:06:10`），紧凑卡 6 列布局下单行不再折行
-- 凭证纪律同 Claude 官方配额：API key 只在服务进程内使用，不入库、不进前端
+- **Claude 官方配额卡恢复**：上游接口改版（`used_percent`→`utilization`、scoped 周窗移入
+  `limits[]`）后归一化如实拒认、面板静默回落推算卡——现两种形状都认，官方卡与 Claude Code
+  自带 /usage 视图同构（5 小时 / 每周 / scoped 模型如 Fable 各一条），并移入宽卡网格
+- 配额卡倒计时改紧凑格式（`3天 13:17` / `2:06:10`），紧凑卡 6 列布局下单行不再折行；
+  订阅 ROI 行文案压缩（全称进悬浮提示）适配四卡同行
+- Windows：自动递增端口跳过系统保留段（Hyper-V/WinNAT 的 `EACCES`，CI 实测踩过），
+  显式 `--port` 仍大声失败；zstd 单帧回落不再被压缩负载里的巧合帧魔数误判
+- 凭证纪律：ZCode key 与 Claude token 都只在服务进程内使用，不入库、不进前端
 
 ### 1.6.0（2026-09-21）
 

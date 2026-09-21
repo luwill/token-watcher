@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { SOURCES, DB_PATH, DATA_DIR, isOffline } from './config.js';
 import { computeHealth } from './server.js';
+import { zcodeQuotaTargets } from './zcodeQuota.js';
 import { readClaudeOauthToken } from './claudeUsage.js';
 
 /**
@@ -66,6 +67,8 @@ export async function runDoctor(store, scannerStats, { log = console.log } = {})
   log(`  ${existsSync(envPath) ? '✓' : '·'} ${envPath}${existsSync(envPath) ? '' : '（无 → 余额轮询跳过，不影响其他功能）'}`);
   const claudeTok = await readClaudeOauthToken().catch(() => null);
   log(`  ${claudeTok ? '✓' : '·'} Claude Code OAuth 凭证${claudeTok ? '（官方配额轮询可用）' : '（无 → 面板用 5h 窗口推算兜底）'}`);
+  const zcodeTargets = await zcodeQuotaTargets().catch(() => []);
+  log(`  ${zcodeTargets.length ? '✓' : '·'} ZCode coding-plan API key${zcodeTargets.length ? `（GLM 配额轮询可用，${zcodeTargets.length} 个）` : '（无 → GLM 配额卡跳过，不影响其他功能）'}`);
 
   log(problems.length ? `结论：${problems.length} 项需要处理（见上）` : '结论：未发现问题');
   return { ok: problems.length === 0, problems };

@@ -193,7 +193,9 @@ export class ZcodeQuotaPoller {
       ? { ...data, mcp }
       : (prev && mcp ? { ...prev.data, mcp } : null);
     if (merged && (data || mcp)) {
-      this.store.saveQuota(QUOTA_KEY, Date.now(), merged);
+      // 只有 MCP 更新时保留原 ts：快照陈旧度跟踪的是"积分窗口的拉取时间"，否则
+      // ZCode 一直开着（日志持续有新记录）会把过期的积分百分比永远刷成"新鲜"
+      this.store.saveQuota(QUOTA_KEY, data ? Date.now() : prev.ts, merged);
       if (data) this._lastError = null;
       if (this.onChange) this.onChange();
     }

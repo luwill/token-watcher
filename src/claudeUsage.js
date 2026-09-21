@@ -19,8 +19,10 @@ const KEYCHAIN_SERVICES = ['Claude Code-credentials'];
 const QUOTA_KEY = 'claude-usage';
 
 /** 读取 Claude Code 的 OAuth accessToken。找不到凭证返回 null（未装/未登录都是正常态）。
- * TOKENMETER_NO_KEYCHAIN=1 时跳过钥匙串（测试进程不该摸宿主钥匙串）。 */
-export function readClaudeOauthToken({
+ * TOKENMETER_NO_KEYCHAIN=1 时跳过钥匙串（测试进程不该摸宿主钥匙串）。
+ * 必须恒为 Promise：钥匙串路径是同步 exec，裸 return 字符串会让调用方的 .catch 炸掉
+ * （doctor 在有钥匙串凭证的真机上就因此跑不完）。 */
+export async function readClaudeOauthToken({
   platform = process.platform,
   home = HOME,
   execImpl = execFileSync,

@@ -1659,6 +1659,23 @@ console.log('\n[13] Claude 官方配额单元');
   const tonight2355 = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), 23, 55).getTime();
   ok('zcode MCP 配额优先取今日日志', (await zq.readZcodeMcpUsage({ home: zcodeHome, nowMs: tonight2355 }))?.used === 3);
   ok('zcode 日志全过期/缺失返回 null', await zq.readZcodeMcpUsage({ home: zcodeHome, nowMs: tonight2355 + 7 * 3600_000 }) === null);
+  // 轮询的陈旧度诚实性：积分拉取失败、只有 MCP 日志更新时，快照 ts 不得刷新
+  {
+    const ago = new Date(Date.now() - 60_000); // 行时间相对真实时钟，避免跨午夜的边界
+    const hhmmss = `${String(ago.getHours()).padStart(2, '0')}:${String(ago.getMinutes()).padStart(2, '0')}:${String(ago.getSeconds()).padStart(2, '0')}.000`;
+    writeFileSync(join(zlogDir, `${day(ago)}.log`), `[${day(ago)} ${hhmmss}] [info] [usage-stats] 官方 MCP 额度响应 ${JSON.stringify({ body: JSON.stringify({ code: 0, data: { total_usage: { used: 3, limit: 1000, remaining: 997 } } }), status: 200 })}\n`);
+    const saved = [];
+    const prevSnap = { ts: Date.now() - 40 * 60_000, data: { windows: [{ label: '5 小时', used_percent: 1 }], level: 'pro', mcp: null } };
+    const fakeStore = {
+      getQuota: () => prevSnap, // 固定快照：Date.now() 每次调用有毫秒差，会引入竞态
+      saveQuota: (k, ts, data) => saved.push({ ts, data }),
+    };
+    const poller = new zq.ZcodeQuotaPoller(fakeStore, { home: zcodeHome, fetchImpl: () => Promise.reject(new Error('HTTP 500')) });
+    await poller.poll();
+    ok('zcode 只有 MCP 更新时保留原快照 ts（积分窗口的陈旧度不被日志刷新掩盖）',
+      saved.length === 1 && saved[0].ts === prevSnap.ts && saved[0].data?.mcp?.used === 3,
+      JSON.stringify(saved));
+  }
   rmSync(zcodeHome, { recursive: true, force: true });
 
   // Cursor：本地无逐请求 token，走账号级 CSV。单元覆盖列名解析、口径换算、
