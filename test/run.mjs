@@ -1528,7 +1528,18 @@ console.log('\n[12] serve 端口行为');
 {
   // 随机端口起一个真实 serve（未显式 --port，经 TOKENMETER_PORT 指定基端口）
   const pickFree = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
-  const base = await pickFree();
+  // Windows 的 WinNAT 会保留成段端口（EACCES）：基端口可用不代表下一个可用。
+  // 挑"base 可占且 base+1 实测可绑"的基线，断言才不靠运气（曾连挂两次 CI 的 flake 根源）。
+  const bindable = (p) => new Promise(r => {
+    const s = net.createServer();
+    s.once('error', () => r(false));
+    s.listen(p, '127.0.0.1', () => s.close(() => r(true)));
+  });
+  let base = 0;
+  for (let i = 0; i < 50 && !base; i++) {
+    const p = await pickFree();
+    if (await bindable(p + 1)) base = p;
+  }
   const squatter = net.createServer();
   await new Promise(r => squatter.listen(base, '127.0.0.1', r)); // 占住基端口
 

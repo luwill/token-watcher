@@ -243,8 +243,9 @@ if (cmd === 'scan') {
   scanner.startWatching();
   const balancePoller = new BalancePoller(store, { log });
 
-  // 未显式指定端口时，被占则自动向后尝试（最多 20 个），避免"端口被残留进程占住就起不来"；
-  // 显式 --port 被占仍大声失败——用户点名要的端口，悄悄换一个更危险（菜单栏胶囊等会连不上）
+  // 未显式指定端口时，被占或不可绑定（Windows 的 Hyper-V/WinNAT 保留段会成段出现）则
+  // 自动向后尝试，避免"端口被残留进程占住就起不来"；显式 --port 被占仍大声失败——
+  // 用户点名要的端口，悄悄换一个更危险（菜单栏胶囊等会连不上）
   const tryListen = (p) => startServer({ store, scanner, balancePoller, port: p, log });
   let actualPort = port, server = null;
   if (opts.portExplicit) {
@@ -254,7 +255,7 @@ if (cmd === 'scan') {
       process.exit(1);
     });
   } else {
-    for (let p = port; p < port + 20; p++) {
+    for (let p = port; p < port + 64; p++) {
       try { server = await tryListen(p); actualPort = p; break; }
       catch (err) {
         // EADDRINUSE=被占；EACCES 多见于 Windows 的 Hyper-V/WinNAT 保留端口段——端口
@@ -263,7 +264,7 @@ if (cmd === 'scan') {
         log(`端口 ${p} ${err.code === 'EADDRINUSE' ? '被占用' : '不可绑定（系统保留段）'}，尝试 ${p + 1}…`);
       }
     }
-    if (!server) { log(`端口 ${port}-${port + 19} 都被占用，放弃`); process.exit(1); }
+    if (!server) { log(`端口 ${port}-${port + 63} 都不可用，放弃`); process.exit(1); }
     if (actualPort !== port) log(`实际使用端口 ${actualPort}（默认端口 ${port} 被占用）`);
   }
 
