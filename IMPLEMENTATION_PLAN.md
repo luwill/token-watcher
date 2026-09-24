@@ -210,9 +210,11 @@ src/leaderboard.js 默认 URL 已更新。未发布 npm 包、未重启本地服
 
 1. [x] 核对远端 main、已有版本和登录状态，准备 1.8.0 元数据与发布说明。
 2. [x] 完成隔离回归、macOS universal 构建、真实打包和干净安装验收。
-3. [ ] 提交并推送 main，等待三平台 CI 通过。
-4. [ ] 发布 npm 1.8.0 和 GitHub Release，核对公开版本与产物。
+3. [x] 提交并推送 main，三平台 CI 的 10 个任务全部通过。
+4. [ ] GitHub Release 已公开并核对产物；npm 1.8.0 等待账号持有人完成发布双重验证，完成后核对 registry。
 
 P2 已知限制随发布说明披露，不在本轮扩展重构；不重启用户本机服务，不再执行云端迁移。
 
 发布预验收：1.8.0 完整回归 550 项通过；prepack 构建 x86_64 + arm64，真实包 54 个文件与当前源码逐文件一致，无凭证/数据库/账号配置。临时 consumer 安装成功，CLI 版本及 8 个资源/API 端点通过。产物和日志：/private/tmp/token-watcher-release-1.8.0/。
+
+发布进度（2026-09-25）：提交 1aa534c 已推送 origin/main，v1.8.0 标签指向该提交。CI：https://github.com/luwill/token-watcher/actions/runs/36024063487 。GitHub Release：https://github.com/luwill/token-watcher/releases/tag/v1.8.0 ，包含 npm 格式安装包及 SHA256SUMS；已注明 npm 尚未发布。npm 登录已恢复到 louwill，发布命令等待官方双重验证，浏览器工具不允许操作该安全验证页面，由用户自行完成。未修改真实用量库或重启本机服务。

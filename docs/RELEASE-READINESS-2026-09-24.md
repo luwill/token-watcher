@@ -88,3 +88,10 @@
 - `/private/tmp/token-leaderboard-model-period-tests.log`：525 项既有回归结果。
 
 后续顺序：处理 P2，更新版本及发布说明，验证真实打包安装与三平台 CI，再发布候选版本。R1–R4 的本地修复已完成，本轮不扩大到上述收尾项。
+
+## 2026-09-25 发布执行记录
+
+- 发布代码提交 `1aa534c` 已推送 main，标签 `v1.8.0` 指向该提交。
+- [GitHub CI](https://github.com/luwill/token-watcher/actions/runs/36024063487) 全部 10 个任务通过：三平台 Node 22.13/24 回归、三平台安装与模块导入。
+- [GitHub Release](https://github.com/luwill/token-watcher/releases/tag/v1.8.0) 已公开，含安装包与 SHA256SUMS；tarball SHA-1 为 `40c5d22e07f671a31b94a23eda37443a2a7514a3`。
+- npm 发布尚待账号持有人完成双重验证；不能将 GitHub Release 已发布表述为 npm 已发布。
