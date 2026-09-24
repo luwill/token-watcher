@@ -6,9 +6,20 @@
  * 挂到 body 脱离裁切容器，再把坐标夹进视口，保证悬浮内容始终完整可见。
  * 只做 appendToBody 不够——图表贴顶时会改由浏览器窗口继续裁切。
  */
-export const TIP_STYLE = {
+const TIP_STYLE_DARK = {
   backgroundColor: '#1a1a25', borderColor: '#262636',
   textStyle: { color: '#e8e8f0', fontSize: 12 },
+};
+
+// 颜色跟随主题变量；测试环境（Node）无 document，回落到深色默认
+const tipStyle = () => {
+  if (typeof document === 'undefined' || !document.documentElement) return TIP_STYLE_DARK;
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n, fb) => cs.getPropertyValue(n).trim() || fb;
+  return {
+    backgroundColor: v('--panel2', '#1a1a25'), borderColor: v('--border', '#262636'),
+    textStyle: { color: v('--text', '#e8e8f0'), fontSize: 12 },
+  };
 };
 
 const TIP_GAP = 12;  // 悬浮框与光标的间距
@@ -42,5 +53,5 @@ export function tooltipPosition(dom, view = globalThis) {
  * @param {object} [extra] 其余 tooltip 选项（trigger/formatter/valueFormatter…）
  */
 export const chartTooltip = (dom, extra = {}) => ({
-  ...TIP_STYLE, appendToBody: true, position: tooltipPosition(dom), ...extra,
+  ...tipStyle(), appendToBody: true, position: tooltipPosition(dom), ...extra,
 });

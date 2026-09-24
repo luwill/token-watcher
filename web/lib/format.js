@@ -52,6 +52,24 @@ export function windowLabel(minutes) {
   return `${m} 分钟`;
 }
 
+/**
+ * 模型展示名：把连字符次版本号点化，claude-opus-5-5 → claude-opus-5.5，
+ * 与 glm-5.3 / gpt-5.6-sol 的原生写法对齐。仅用于展示层——数据库、牌价表、
+ * pricing.json 的键仍是原始 id，此处不得参与任何查找/聚合。
+ * 次版本限一位数：Anthropic 各代次版本都是一位（5-5、4-8），而 gpt-4-0613、
+ * …-20251001 这类日期快照是四/八位，天然被排除，不会被点化成 4.0613。
+ */
+export function prettyModel(m) {
+  if (typeof m !== 'string' || !m) return m;
+  return m.replace(/-(\d+)-(\d)(?=-|$)/, '-$1.$2');
+}
+
+/** 花费图与模型 Top10 共用的展示名：DeepSeek 家族统一归并为 deepseek-v4.1-flash（按用户口径），
+ *  其余仅次版本点化。同一模型在两张图共用此名，才能共用色槽保持同色。仅展示层，键不换。 */
+export function displayModelName(m) {
+  return prettyModel(String(m ?? '').startsWith('deepseek') ? 'deepseek-v4.1-flash' : m);
+}
+
 /** 倒计时：紧凑的数字格式（"2天 3:08" / "3:57:18" / "57:18"）——配额卡窗口行只有
  * 约 170px 宽，"3时57分18秒"式全宽中文会把"标签 · 已用% + 重置"折成两行 */
 export function fmtCountdown(ms) {

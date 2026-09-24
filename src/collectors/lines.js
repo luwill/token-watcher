@@ -15,9 +15,17 @@ export function readLinesFrom(path, offset, onLine) {
       const buf = leftover ? Buffer.concat([leftover, chunk]) : chunk;
       let start = 0;
       let idx;
-      while ((idx = buf.indexOf(0x0a, start)) !== -1) {
-        onLine(buf.subarray(start, idx).toString('utf8'));
-        start = idx + 1;
+      try {
+        while ((idx = buf.indexOf(0x0a, start)) !== -1) {
+          onLine(buf.subarray(start, idx).toString('utf8'));
+          start = idx + 1;
+        }
+      } catch (err) {
+        // data 回调不在 Promise executor 的同步调用栈内：必须显式 reject，
+        // 扫描器才会回滚当前文件事务，并继续处理下一文件。
+        stream.destroy();
+        reject(err);
+        return;
       }
       if (start > 0) {
         pos += start;

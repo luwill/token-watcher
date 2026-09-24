@@ -8,7 +8,8 @@ One resident process parses the session logs your AI coding tools already
 leave on disk, normalizes them into a per-request event stream, and serves a
 live dashboard: Codex-style stats, real-time quota cards, vendor balance
 polling, cost estimation with reconciliation, and a macOS menu-bar capsule.
-Zero runtime dependencies. Fully local.
+Local storage by default. The optional community leaderboard shares only
+aggregate statistics after you explicitly opt in.
 
 [![npm version](https://img.shields.io/npm/v/token-watcher)](https://www.npmjs.com/package/token-watcher)
 [![CI](https://github.com/luwill/token-watcher/actions/workflows/test.yml/badge.svg)](https://github.com/luwill/token-watcher/actions/workflows/test.yml)
@@ -44,7 +45,7 @@ spend so you can see when the estimate drifts.
 | Sources | 13, incl. China stack (ccmr, dsh, Qoder, Kimi Code, WorkBuddy) | 39 | Multi-agent | Multi-agent |
 | Cost | LiteLLM prices + **balance reconciliation** + credits ledger | LiteLLM estimate | Estimate | Estimate |
 | Official quotas | Claude / Codex direct-read, Cursor billing CSV | 17 providers | Limited | Several |
-| Telemetry | None, ever | Opt-out | None | None |
+| Telemetry | Optional, opt-in aggregate leaderboard | Opt-out | None | None |
 | Install | One zero-dependency npm package (incl. universal menu-bar app) | npm + platform packages | npm | npm |
 
 ## Supported tools (13 sources)
@@ -99,6 +100,8 @@ token-watcher today [--json|--light]            # today's usage (machine-readabl
 token-watcher sessions --day 2026-09-20 [--csv] [--git]   # per-session stats (+ git commit attribution)
 token-watcher wrapped [--year 2026] [--json]    # year in review
 token-watcher roi [--json]                     # subscription ROI (API-equivalent vs paid)
+token-watcher leaderboard [on <name>|off|status|push|url <url>]
+                                                # community leaderboard (opt-in, aggregate numbers only)
 token-watcher doctor                            # environment + store + per-source health
 token-watcher uninstall [--purge-data] [--yes]  # remove all local traces
 token-watcher --version
@@ -113,6 +116,7 @@ token-watcher --version
 - **Quotas**: Codex official (direct-read), Claude official (local OAuth token → official usage endpoint; falls back to 5h window estimation)
 - **Subscription ROI**: this month's API-equivalent cost vs what you actually pay (configure prices in `~/.tokenmeter/subscriptions.json`; `token-watcher roi`)
 - **Balances & costs**: DeepSeek/Kimi balance polling; LiteLLM pricing with per-model CNY conversion; **balance reconciliation**; Qoder credits ledger
+- **Community leaderboard** (opt-in, off by default): see how your daily/weekly/30-day totals stack up against other users — aggregate numbers only, never your raw events. `token-watcher leaderboard on <name>`
 - **Health self-check**: parse errors turn red, "file being written but no new events" turns yellow — silent format drift gets caught
 - **Exports & backups**: CSV, session/annual CLI reports, daily `VACUUM INTO` snapshots (7 kept)
 
@@ -140,18 +144,65 @@ your real spend. Clearly labeled as a hypothetical caliber: subscriptions come
 with rate limits and API prices may be discounted. Credits-based tools (Qoder)
 show this month's credits spent instead of a made-up ratio.
 
+### Community leaderboard (opt-in)
+
+Off by default. Join explicitly with a nickname:
+
+```bash
+token-watcher leaderboard on <nickname>   # join (1-16 chars, no links/@)
+token-watcher leaderboard status          # participation + last report state
+token-watcher leaderboard push            # report once right now
+token-watcher leaderboard off             # stop reporting; daily cleanup after 30d inactivity
+token-watcher leaderboard url <https://…> # point at a self-hosted instance
+```
+
+What gets reported — **aggregate numbers only, once per hour**:
+
+| Reported | Never leaves your machine |
+|---|---|
+| Nickname, a random local UUID (regeneratable) | File paths, project names |
+| UTC today's / rolling-7-day / rolling-30-day token totals, request count | Per-request rows, timestamps |
+| Dominant model per period (day / 7 / 30 days); legacy weekly model/tool shares (top 5) | API keys, machine identifiers |
+| Subscription ROI as a ratio (×N, no amounts) | Session content, anything else |
+
+The panel can read the public leaderboard even before joining; only opted-in
+clients upload usage aggregates. Viewing the panel makes a public GET request
+without your random UUID when participation is disabled. `doctor` shows
+the participation state either way. The reference backend is a
+Cloudflare Worker + D1 (free tier) in [`cloud/`](cloud/README.md) — anyone can
+self-host one and point the CLI at it. Server-side defenses: name sanitizing,
+all-field clamping, 16 KiB request limits, edge rate limiting, 60s per-ID throttling,
+and daily cleanup of entries inactive for over 30 days (normally removed within 31 days).
+The daily board uses UTC; the rolling-7-day and rolling-30-day boards require a report within 24 hours. Older clients without a 30-day total remain on the day/week boards until upgraded.
+
+The dominant model follows the selected period: UTC today, rolling 7 days, or
+rolling 30 days. It is the model with the largest `total_tokens` sum in that window;
+its percentage is rounded against **all** tokens in the same window. Only the
+winner is displayed; ties use model ID order. Events without a model remain in the
+denominator but cannot be a dominant model. Model versions remain distinct.
+Older reports containing only weekly models show a pending-update message on the
+daily/30-day boards instead of reusing weekly data. Tool shares remain weekly.
+ROI is a local-calendar-month hypothetical API-equivalent/monthly-fee ratio.
+All figures are **self-reported and unverified**; this is not a competition or audited usage record.
+The application database does not store IP addresses; Cloudflare processes network
+metadata and uses source IPs for edge rate limiting.
+
 ## Privacy
 
 Fully local. The dashboard binds to 127.0.0.1 only (with Host validation).
 API keys and tokens are used inside the server process only, never stored or
-sent to the frontend. Usage data never leaves your machine.
+sent to the frontend. Usage data never leaves your machine — with one explicit
+exception: the opt-in community leaderboard above, which sends only the
+aggregate numbers listed there, only after you run `leaderboard on`.
 
-Outbound requests (only these, none carry your usage data): FX rate (12h),
-LiteLLM price table (24h), vendor balances (30min, with your key), Claude
-official quota (10min, with Claude Code's local OAuth token), Cursor usage
-CSV (30min, with a cookie built from local credentials), GLM Coding Plan
-credit quota (10min, with ZCode's own local API key; MCP tool quota is read
-from local logs only). Set `TOKENMETER_OFFLINE=1` to skip all of them.
+Outbound requests (only these; none carry your usage data unless noted): FX
+rate (12h), LiteLLM price table (24h), vendor balances (30min, with your key),
+Claude official quota (10min, with Claude Code's local OAuth token), Cursor
+usage CSV (30min, with a cookie built from local credentials), GLM Coding
+Plan credit quota (10min, with ZCode's own local API key; MCP tool quota is
+read from local logs only), leaderboard aggregate report (hourly, **opt-in
+only**), and public leaderboard reads when viewing the dashboard.
+Set `TOKENMETER_OFFLINE=1` to skip all of them.
 
 ## Requirements
 

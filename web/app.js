@@ -1,7 +1,7 @@
 /* Token Watcher 面板：fetch /api/summary 渲染，SSE 实时刷新。
  * 纯逻辑（格式化/系列选择/配色/悬浮框定位）在 lib/ 下，可被 test/run.mjs 直接 import。
  * ECharts 走全局 UMD（index.html 里的 <script>），不参与模块图。 */
-import { esc, fmt, fmtShort, hhmm, ymd, windowLabel, fmtCountdown } from './lib/format.js';
+import { esc, fmt, fmtShort, hhmm, ymd, windowLabel, fmtCountdown, prettyModel, displayModelName } from './lib/format.js';
 import {
   TOOL_COLORS, TOOL_LABEL, MODEL_PALETTE, OTHER_COLOR, OTHER_DECAL, HEAT_COLORS, HEAT_EMPTY,
 } from './lib/theme.js';
@@ -9,13 +9,20 @@ import { pickSeries, assignSlots, stackTipFormatter, dayAxis, fillDays } from '.
 import { chartTooltip as makeTooltip } from './lib/tooltip.js';
 
 let days = 7;
+let topView = 'overview';
 let heatMode = 'd';
 let lastSummary = null;
 
 const charts = {};
 for (const [k, id] of [['trend', 'ch-trend'], ['model', 'ch-model'], ['tool', 'ch-tool'], ['heat', 'ch-heat'], ['toolsAct', 'ch-tools-act'], ['sess', 'sess-detail'], ['costday', 'ch-costday']]) {
   const el = document.getElementById(id);
-  if (el) charts[k] = echarts.init(el, null, { renderer: 'canvas' });
+  if (el) {
+    // 堆叠矩形独立在 Canvas 上抗锯齿，会在共享的小数像素边界露出暗缝。
+    // 两张按天图使用 SVG，由 crispEdges 将相邻边界栅格化到同一像素。
+    const stacked = k === 'trend' || k === 'costday';
+    if (stacked) el.classList.add('crisp-stack');
+    charts[k] = echarts.init(el, null, { renderer: stacked ? 'svg' : 'canvas' });
+  }
 }
 // 成对行布局会拉伸图表容器，ECharts 需显式 resize 才重排；
 // 必须先比对尺寸再 resize，否则与 flex 布局形成反馈循环（容器无限拉长）
@@ -51,6 +58,54 @@ const gridBottom = (rowCount) => (rowCount > 31 ? 44 : 22) + LEGEND_H;
 // 否则两图类目数/绘图区宽不同时，柱子实际渲染宽度就对不上
 const BAR_MAX_W = 24; // dataviz 规范：柱宽 ≤24px，不填满类目槽，留白给间隙
 const DAY_GRID = { left: 70, right: 16, top: 14 };
+
+/* ---------- 主题 / 空态 / 进度条助手 ---------- */
+// 图表颜色在每次渲染时从 CSS 变量读：切换主题后整页重绘即可换色，ECharts 不必感知主题
+const cssVar = (name, fb) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fb;
+const isLight = () => document.documentElement.dataset.theme === 'light';
+
+// 浅色底的工具色：同色相加深到白底可读。色相未动，区分度排序继承深色版的 CIEDE2000 校验；
+// 与 style.css 的 [data-theme="light"] .badge.* 同步维护。
+const LIGHT_TOOL_COLORS = {
+  'claude-code': '#b4533a', 'ccmr': '#6d5bd0', 'codex': '#0e8a55', 'zcode': '#8a6d15',
+  'dsh': '#1c6fb8', 'workbuddy': '#c9386f', 'grok': '#333a44', 'pi': '#0c7f8f',
+  'opencode': '#bc5a10', 'kimi': '#25743f', 'qoder': '#7d5236', 'cursor': '#7d6412', 'antigravity': '#4f4a5c',
+};
+const toolColor = (t, fallback) => (isLight() && LIGHT_TOOL_COLORS[t]) || TOOL_COLORS[t] || fallback;
+
+// GitHub 浅色版热力阶（白底淡→深绿、空格浅灰）；深色版常量在 lib/theme.js
+const HEAT_COLORS_LIGHT = ['#9be9a8', '#40c463', '#30a14e', '#216e39'];
+const heatColors = () => (isLight() ? HEAT_COLORS_LIGHT : HEAT_COLORS);
+const heatEmpty = () => (isLight() ? '#ebedf0' : HEAT_EMPTY);
+
+/** 空态：清掉旧图并显示占位文案；数据回来时由 clearEmpty 恢复 */
+function markEmpty(key) {
+  const el = charts[key]?.getDom();
+  if (!el) return;
+  charts[key].clear();
+  el.classList.add('empty');
+  el.dataset.empty = '范围内无数据';
+}
+function clearEmpty(key) {
+  const el = charts[key]?.getDom();
+  if (el && el.classList.contains('empty')) { el.classList.remove('empty'); delete el.dataset.empty; }
+}
+
+/** 配额进度条：按阈值整体换色（lv-ok/lv-warn/lv-hot 见 style.css） */
+const qBar = (used) => {
+  const lv = used >= 90 ? 'lv-hot' : used >= 70 ? 'lv-warn' : 'lv-ok';
+  return `<div class="q-bar"><div class="q-fill ${lv}" style="width:${Math.min(used, 100)}%"></div></div>`;
+};
+
+/* 主题持久化：默认深色，手动选择记入 localStorage；切换后整页重绘（图表色是渲染时读的） */
+if (localStorage.getItem('tw-theme') === 'light') document.documentElement.dataset.theme = 'light';
+document.getElementById('theme-btn').addEventListener('click', () => {
+  const root = document.documentElement;
+  const toLight = root.dataset.theme !== 'light';
+  if (toLight) root.dataset.theme = 'light'; else root.removeAttribute('data-theme');
+  localStorage.setItem('tw-theme', toLight ? 'light' : 'dark');
+  if (lastSummary) render();
+});
 
 async function load() {
   const banner = document.getElementById('load-error');
@@ -122,7 +177,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       return `<div class="q-win">
         <div class="q-meta q-win-head"><span title="已用 ${used.toFixed(1)}%"><b>${esc(windowLabel(w.window_minutes))}</b> ${used.toFixed(1)}%</span>
           <span class="dim">重置 <b class="cd" data-at="${esc(w.resets_at)}">--</b></span></div>
-        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+        ${qBar(used)}
       </div>`;
     }).join('');
     html += `<div class="quota-card">
@@ -145,7 +200,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
         ? `<span class="dim">重置 <b class="cd" data-at="${Math.floor(w.resets_at / 1000)}">--</b></span>` : '';
       return `<div class="q-win">
         <div class="q-meta q-win-head"><span${tip}><b>${esc(w.label)}</b> ${used.toFixed(1)}%</span>${reset}</div>
-        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+        ${qBar(used)}
       </div>`;
     };
     const rows = zq.windows.map((w) => winRow(w, '积分')).join('');
@@ -167,7 +222,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       return `<div class="q-win">
         <div class="q-meta q-win-head"><span title="已用 ${used.toFixed(1)}%"><b>${esc(label)}</b> ${used.toFixed(1)}%</span>
           <span class="dim">重置 <b class="cd" data-at="${atSec}">--</b></span></div>
-        <div class="q-bar"><div class="q-fill" style="width:${Math.min(used, 100)}%"></div></div>
+        ${qBar(used)}
       </div>`;
     };
     const scoped = (cu.weekly_scoped || []).map(s => winRow(`${s.label} 周额度`, s)).join('');
@@ -186,7 +241,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
         <div class="quota-head"><span class="q-title">Claude 5h 窗口</span><span class="q-plan cc">推算</span>
           <span class="q-reset">${c5.window_calls} 次调用</span></div>
         <div class="q-meta" style="margin-top:2px">
-          <span style="font-size:20px;font-weight:650">${fmt(c5.window_tokens)}</span>
+          <span class="stat-value">${fmt(c5.window_tokens)}</span>
           <span class="dim">剩余 <b class="cd" data-at="${Math.floor(c5.window_ends_at / 1000)}">--</b></span>
         </div>
       </div>`;
@@ -205,7 +260,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       <div class="quota-head"><span class="q-title">${esc(b.provider)} 余额</span>
         <span class="q-reset">${esc(b.currency)}</span></div>
       <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">¥ ${Number(b.balance).toFixed(2)}</span>
+        <span class="stat-value">¥ ${Number(b.balance).toFixed(2)}</span>
         <span class="dim">${new Date(b.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新</span>
       </div>
       ${reconLine}
@@ -216,12 +271,12 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
   if (costs && (costs.today_cny > 0 || costs.all_cny > 0)) {
     const chips = esc((costs.by_tool || []).slice(0, 4)
       .map(t => `${TOOL_LABEL[t.tool] || t.tool} ¥${t.cost_cny.toFixed(2)}`).join(' · '));
-    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${esc(costs.unpriced.join(', '))}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
+    const unpriced = costs.unpriced?.length ? `<div class="recon dim" title="${esc(costs.unpriced.map(prettyModel).join(', '))}">⚠ ${costs.unpriced.length} 个模型未配价</div>` : '';
     whtml += `<div class="quota-card">
       <div class="quota-head"><span class="q-title">API 花费（LiteLLM 牌价）</span>
         <span class="q-reset" title="${costs.fx_ts ? '汇率时间 ' + esc(new Date(costs.fx_ts).toLocaleString('zh-CN')) : ''}">USD×${esc(costs.usd_to_cny)}${costs.fx_source === 'manual' ? '' : ' ·实时'}</span></div>
       <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
+        <span class="stat-value">今日 ¥ ${costs.today_cny.toFixed(2)}</span>
         <span class="dim">近7天 ¥ ${costs.last7d_cny.toFixed(2)}</span>
       </div>
       <div class="recon dim" title="${chips}">${chips}</div>
@@ -236,7 +291,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       <div class="quota-head"><span class="q-title">Qoder 积分消耗</span>
         <span class="q-plan cc">官方口径</span></div>
       <div class="q-meta" style="margin-top:2px">
-        <span style="font-size:20px;font-weight:650">今日 ${credits.qoder.today.toFixed(2)}</span>
+        <span class="stat-value">今日 ${credits.qoder.today.toFixed(2)}</span>
         <span class="dim">累计 ${credits.qoder.total.toFixed(1)} 积分</span>
       </div>
       <div class="recon dim">上游本地不报 token，仅积分；token 待其恢复上报</div>
@@ -255,8 +310,8 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
         : `API 等值 ¥${e.api_cny < 0.01 ? e.api_cny.toFixed(4) : e.api_cny.toFixed(2)}`;
       const badge = e.paid_cny == null ? '<span class="dim">月费未填</span>'
         : e.ratio == null ? '<span class="dim">—</span>'
-        : e.ratio >= 1 ? `<b style="color:var(--codex)">×${e.ratio.toFixed(1)} 划算</b>`
-        : `<b style="color:#e0b34c">×${e.ratio.toFixed(1)}</b>`;
+        : e.ratio >= 1 ? `<b style="color:var(--good)">×${e.ratio.toFixed(1)} 划算</b>`
+        : `<b style="color:var(--warn)">×${e.ratio.toFixed(1)}</b>`;
       const paid = e.paid_cny == null ? '' : ` / ¥${e.paid_cny.toFixed(0)}`;
       return `<div class="q-meta" style="margin-top:4px" title="${esc(apiFull)}${e.paid_cny != null ? esc(' / 月费 ¥' + e.paid_cny.toFixed(0)) : ' · 月费未填'}">
         <span>${esc(e.name)}</span>
@@ -282,8 +337,8 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
   // WorkBuddy 费率
   if (rates?.length) {
     const rows = rates.map(r => `<tr>
-      <td>${esc(r.model)}</td><td>${r.fresh_rate.toFixed(1)}</td>
-      <td class="dim">${r.cache_rate.toFixed(1)}</td><td>${r.out_rate.toFixed(1)}</td><td class="dim">${r.turns}</td>
+      <td>${esc(prettyModel(r.model))}</td><td class="num">${r.fresh_rate.toFixed(1)}</td>
+      <td class="num dim">${r.cache_rate.toFixed(1)}</td><td class="num">${r.out_rate.toFixed(1)}</td><td class="num dim">${r.turns}</td>
     </tr>`).join('');
     const lastUp = Math.max(...rates.map(r => r.updated_at || 0));
     const updLine = lastUp > 0
@@ -291,7 +346,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
     whtml += `<div class="quota-card rates-card">
       <div class="quota-head"><span class="q-title">WorkBuddy 积分费率（自学习）</span>
         <span class="q-reset">积分/百万 token</span></div>
-      <table class="rates-table"><thead><tr><th>模型</th><th>输入</th><th>缓存</th><th>输出</th><th>样本</th></tr></thead>
+      <table class="rates-table"><thead><tr><th>模型</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">样本</th></tr></thead>
       <tbody>${rows}</tbody></table>
       ${updLine}
     </div>`;
@@ -300,17 +355,29 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
   if (wide) wide.innerHTML = whtml;
 }
 
+/** 图例（plain 换行）会从底边向上生长：行数多时上面的行会叠进绘图区压在柱子上，
+ * 色块（14×9）浮在柱段上看起来就是"堆叠段没对齐"。按系列名估宽算行数，
+ * 让 grid.bottom 给换行图例留出空间。 */
+function legendExtraBottom(names, chartW) {
+  const textW = (s) => [...String(s)].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e00 ? 11 : 6.2), 0);
+  const total = names.reduce((s, n) => s + 14 + 5 + textW(n) + 10, 0); // 色块+间距+文字+itemGap
+  const rows = Math.max(1, Math.ceil(total / Math.max(1, chartW)));
+  return rows > 1 ? (rows - 1) * 17 + 6 : 0;
+}
+
 /** 按天花费（模型堆叠柱形图） */
 function renderCostDay(byDay) {
-  if (!charts.costday || !byDay?.length) return;
-  // DeepSeek 家模型统一归并为 deepseek-v4.1-flash 展示（按用户口径）
-  const displayName = (m) => m.startsWith('deepseek') ? 'deepseek-v4.1-flash' : m;
+  if (!charts.costday) return;
+  if (!byDay?.length) return markEmpty('costday');
+  clearEmpty('costday');
+  // DeepSeek 家模型统一归并为 deepseek-v4.1-flash 展示（按用户口径）；
+  // 其余 id 只做展示名点化（claude-opus-5-5 → claude-opus-5.5），键不换（displayModelName）
   const byDayMap = new Map(byDay.map(d => [d.day, d]));
   // 与按天消耗共用同一条日期轴（同样补洞），否则类目数不同、柱子无法对齐等宽
   const rows = dayAxis(byDay, days || 90).map((day) => {
     const models = {};
     for (const [m, c] of Object.entries(byDayMap.get(day)?.models || {})) {
-      const n = displayName(m);
+      const n = displayModelName(m);
       models[n] = (models[n] || 0) + c;
     }
     return { day, models };
@@ -326,21 +393,21 @@ function renderCostDay(byDay) {
   const series = keys.map(n => barOf(n, [n], { color: MODEL_PALETTE[slots.get(n)] }));
   if (rest.length) series.push(barOf(otherName, rest, { color: OTHER_COLOR, decal: OTHER_DECAL }));
   charts.costday.setOption({
-    animationDuration: 300,
-    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) },
+    animation: false,
+    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) + legendExtraBottom(series.map(s => s.name), charts.costday.getWidth()) },
     tooltip: chartTooltip('costday', {
       trigger: 'axis',
       formatter: stackTipFormatter(
         (v) => `¥${v.toFixed(2)}`, i => rows[i]?.models || {}, rest, otherName, 0.005),
     }),
     // plain（默认）会换行铺开，保证每条系列都能直接看到，不用翻页
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
+    legend: { textStyle: { color: cssVar('--dim'), fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
     xAxis: {
       type: 'category', data: rows.map(d => d.day.slice(5)),
-      axisLabel: { color: '#8a8aa0', rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
-      axisLine: { lineStyle: { color: '#262636' } },
+      axisLabel: { color: cssVar('--dim'), rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
+      axisLine: { lineStyle: { color: cssVar('--border') } },
     },
-    yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
+    yAxis: { type: 'value', axisLabel: { color: cssVar('--dim'), formatter: (v) => '¥' + v }, splitLine: { lineStyle: { color: cssVar('--gridline') } } },
     series,
   }, true);
 }
@@ -352,7 +419,7 @@ function renderLive(live) {
   if (!host || !live?.grok) return;
   const el = document.createElement('span');
   el.className = 'h-chip live-chip';
-  el.innerHTML = `<i style="background:#e6edf3"></i>Grok 进行中<b>上下文 ${fmtShort(live.grok.context_tokens)}</b>`;
+  el.innerHTML = `<i style="background:${isLight() ? '#333a44' : '#e6edf3'}"></i>Grok 进行中<b>上下文 ${fmtShort(live.grok.context_tokens)}</b>`;
   el.title = `${live.grok.project ?? ''} · 用量将在轮次结束时落盘`;
   host.appendChild(el);
 }
@@ -364,7 +431,7 @@ function renderBalanceStatus(list) {
   for (const s of list) {
     const el = document.createElement('span');
     el.className = 'h-chip';
-    el.innerHTML = `<i style="background:#e0b34c"></i>${esc(s.id)} 余额<em class="warn"> 已停用</em>`;
+    el.innerHTML = `<i style="background:var(--warn)"></i>${esc(s.id)} 余额<em class="warn"> 已停用</em>`;
     el.title = s.reason || '';
     host.appendChild(el);
   }
@@ -381,7 +448,7 @@ function renderHealth(health) {
     if (m < 1440) return `${Math.floor(m / 60)}时`;
     return `${Math.floor(m / 1440)}天`;
   };
-  const dot = { ok: '#39d353', empty: '#55556a', stale: '#e0b34c', error: '#e0655f' };
+  const dot = { ok: 'var(--good-dot)', empty: '#55556a', stale: 'var(--warn)', error: 'var(--bad)' };
   const label = { ok: '', empty: ' 无数据', stale: ' 疑似停更', error: ' 解析错误' };
   host.innerHTML = health.map(h =>
     `<span class="h-chip" title="${esc(h.last_error || (h.last_event_ts ? '最近事件 ' + new Date(h.last_event_ts).toLocaleString('zh-CN') : ''))}">
@@ -399,12 +466,14 @@ setInterval(() => {
 
 
 function renderTrend(byDay) {
+  if (!byDay?.length) return markEmpty('trend');
+  clearEmpty('trend');
   const rows = fillDays(byDay, days || 90);
   // 只画范围内真正用过的工具，最近用过的排前面（今天没用、范围内用过的仍保留，
   // 否则那天的柱子没有图例可解释）；工具数超出品牌色数量时归入「其他」
   const { keys, rest } = pickSeries(rows, r => r.tools, Object.keys(TOOL_COLORS).length);
   const slots = assignSlots(keys.filter(t => !TOOL_COLORS[t]), MODEL_PALETTE.length, TOOL_SLOT);
-  const colorOf = (t) => TOOL_COLORS[t] || MODEL_PALETTE[slots.get(t)];
+  const colorOf = (t) => toolColor(t, MODEL_PALETTE[slots.get(t)]);
   const labelOf = (t) => TOOL_LABEL[t] || t;
   const otherName = rest.length ? `其他(${rest.length})` : '';
   const sumOf = (names, day) => names.reduce((s, n) => s + (day[n] || 0), 0);
@@ -414,25 +483,24 @@ function renderTrend(byDay) {
   });
   const series = keys.map(t => barOf(labelOf(t), [t], { color: colorOf(t) }));
   if (rest.length) series.push(barOf(otherName, rest, { color: OTHER_COLOR, decal: OTHER_DECAL }));
-  // 圆角只给最顶上一段
-  if (series.length) series[series.length - 1].itemStyle.borderRadius = [3, 3, 0, 0];
+  // 柱段统一直角：带圆弧的 SVG 路径仍可能抗锯齿，在底边重新引入接缝。
   charts.trend.setOption({
-    animationDuration: 300,
-    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) },
+    animation: false,
+    grid: { ...DAY_GRID, bottom: gridBottom(rows.length) + legendExtraBottom(series.map(s => s.name), charts.trend.getWidth()) },
     tooltip: chartTooltip('trend', {
       trigger: 'axis',
       formatter: stackTipFormatter(fmt, i => rows[i]?.tools || {}, rest, otherName),
     }),
     // plain（默认）换行铺开，工具变多或窄屏时不把条目藏进翻页
-    legend: { textStyle: { color: '#8a8aa0', fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
+    legend: { textStyle: { color: cssVar('--dim'), fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
     xAxis: {
       type: 'category', data: rows.map(r => r.day.slice(5)),
-      axisLabel: { color: '#8a8aa0', rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
-      axisLine: { lineStyle: { color: '#262636' } },
+      axisLabel: { color: cssVar('--dim'), rotate: rows.length > 31 ? 45 : 0, fontSize: 11 },
+      axisLine: { lineStyle: { color: cssVar('--border') } },
     },
     yAxis: {
-      type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort },
-      splitLine: { lineStyle: { color: '#1d1d2a' } },
+      type: 'value', axisLabel: { color: cssVar('--dim'), formatter: fmtShort },
+      splitLine: { lineStyle: { color: cssVar('--gridline') } },
     },
     series,
   }, true);
@@ -453,25 +521,38 @@ async function renderToolActivity() {
   try {
     const res = await fetch('/api/tool-activity?days=30');
     const { tools } = await res.json();
-    if (!tools?.length || !charts.toolsAct) return;
+    if (!charts.toolsAct) return;
+    if (!tools?.length) return markEmpty('toolsAct');
+    clearEmpty('toolsAct');
     const rows = [...tools].reverse();
+    // 按「调用方」堆叠上品牌色，与趋势图同一套色彩语言（此前整图一个默认蓝）
+    const sources = [...new Set(rows.flatMap(r => Object.keys(r.tools || {})))];
+    const series = sources.map(t => ({
+      name: TOOL_LABEL[t] || t, type: 'bar', stack: 'a', barMaxWidth: 14,
+      itemStyle: { color: toolColor(t, OTHER_COLOR) },
+      data: rows.map(r => r.tools?.[t] || 0),
+    }));
     charts.toolsAct.setOption({
-      animationDuration: 300,
-      grid: { left: 150, right: 40, top: 10, bottom: 30 },
+      animation: false,
+      grid: { left: 165, right: 40, top: 14, bottom: 44 },
       tooltip: chartTooltip('toolsAct', {
-        formatter: (p) => {
-          const t = rows[p.dataIndex]?.tools || {};
-          const src = Object.entries(t).map(([k, v]) => `${TOOL_LABEL[k] || k} ${v}`).join(' · ');
-          return `${esc(p.name)}<br/>${p.value} 次调用<br/><span style="color:#8a8aa0">${esc(src)}</span>`;
+        trigger: 'axis',
+        formatter: (params) => {
+          const r = rows[params[0]?.dataIndex];
+          if (!r) return '';
+          const used = params.filter(p => p.value > 0).sort((a, b) => b.value - a.value);
+          return `${esc(r.name)}<br/><b>${r.n} 次调用</b><br/>` +
+            used.map(p => `${p.marker} ${esc(p.seriesName)}　${p.value}`).join('<br/>');
         },
       }),
-      xAxis: { type: 'value', axisLabel: { color: '#8a8aa0' }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
-      yAxis: { type: 'category', data: rows.map(r => r.name), axisLabel: { color: '#c7c7d8', fontSize: 11 } },
-      series: [{
-        type: 'bar', data: rows.map(r => r.n), barMaxWidth: 14,
-        itemStyle: { color: '#5aa9e6', borderRadius: [0, 3, 3, 0] },
-        label: { show: true, position: 'right', color: '#8a8aa0', fontSize: 11 },
-      }],
+      legend: { textStyle: { color: cssVar('--dim'), fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
+      xAxis: { type: 'value', axisLabel: { color: cssVar('--dim') }, splitLine: { lineStyle: { color: cssVar('--gridline') } } },
+      yAxis: {
+        type: 'category', data: rows.map(r => r.name),
+        // MCP 工具名可达 35+ 字符：轴标签截断显示，全名靠悬浮
+        axisLabel: { color: cssVar('--text-soft'), fontSize: 11, width: 150, overflow: 'truncate' },
+      },
+      series,
     }, true);
   } catch { /* 静默 */ }
 }
@@ -487,20 +568,20 @@ async function loadSessions(day) {
     const { sessions } = await res.json();
     const host = document.getElementById('sessions');
     if (!sessions?.length) {
-      host.innerHTML = '<div class="dim" style="padding:12px 8px">当日无会话（点击趋势图柱子或切换日期）</div>';
+      host.innerHTML = '<div class="empty-note">当日无会话（点击趋势图柱子或切换日期）</div>';
       return;
     }
     const hh = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     host.innerHTML = `<table>
-      <thead><tr><th>时间段</th><th>工具</th><th>模型</th><th>项目</th><th>tokens</th><th>调用</th><th>峰值上下文(估)</th></tr></thead>
+      <thead><tr><th>时间段</th><th>工具</th><th>模型</th><th>项目</th><th class="num">tokens</th><th class="num">调用</th><th class="num">峰值上下文(估)</th></tr></thead>
       <tbody>${sessions.map(s => `<tr class="sess-row" data-sid="${esc(s.session_id)}">
         <td class="dim" style="font-variant-numeric:tabular-nums">${hh(s.first_ts)}–${hh(s.last_ts)}</td>
         <td><span class="badge ${esc(s.tool)}">${esc(TOOL_LABEL[s.tool] || s.tool)}</span></td>
-        <td class="ellip" title="${esc((s.models || '').split(',').filter(Boolean).join(', '))}">${esc((s.models || '').split(',').filter(Boolean).slice(0, 2).join(', ')) || '-'}</td>
+        <td class="ellip" title="${esc((s.models || '').split(',').filter(Boolean).map(prettyModel).join(', '))}">${esc((s.models || '').split(',').filter(Boolean).map(prettyModel).slice(0, 2).join(', ')) || '-'}</td>
         <td class="dim ellip-sm" title="${esc(s.project)}">${esc(s.project) || '-'}</td>
-        <td>${fmt(s.total)}</td>
-        <td>${s.calls}</td>
-        <td>${fmt(s.peak)}</td>
+        <td class="num">${fmt(s.total)}</td>
+        <td class="num">${s.calls}</td>
+        <td class="num">${fmt(s.peak)}</td>
       </tr>`).join('')}</tbody></table>`;
     host.querySelectorAll('.sess-row').forEach(tr => {
       tr.style.cursor = 'pointer';
@@ -518,8 +599,8 @@ async function showSessionDetail(sid) {
     box.style.display = 'block';
     charts.sess.resize();
     charts.sess.setOption({
-      animationDuration: 200,
-      title: { text: `${sid.slice(0, 18)}… · ${events.length} 次调用`, textStyle: { color: '#8a8aa0', fontSize: 12 }, left: 4, top: 0 },
+      animation: false,
+      title: { text: `${sid.slice(0, 18)}… · ${events.length} 次调用`, textStyle: { color: cssVar('--dim'), fontSize: 12 }, left: 4, top: 0 },
       grid: { left: 70, right: 20, top: 30, bottom: 30 },
       // 这条线是 symbol:'none'，没有可命中的图元 → 必须 axis 触发，否则悬浮框永远不弹
       tooltip: chartTooltip('sess', {
@@ -530,11 +611,13 @@ async function showSessionDetail(sid) {
           return `${new Date(e.ts).toLocaleTimeString('zh-CN')}<br/>合计 ${fmt(e.total_tokens)}<br/>输入 ${fmtShort(e.input_tokens)} · 缓存 ${fmtShort(e.cached_input)} · 输出 ${fmtShort(e.output_tokens)}`;
         },
       }),
-      xAxis: { type: 'category', data: events.map(e => new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })), axisLabel: { color: '#8a8aa0', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
+      xAxis: { type: 'category', data: events.map(e => new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })), axisLabel: { color: cssVar('--dim'), fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: cssVar('--dim'), formatter: fmtShort }, splitLine: { lineStyle: { color: cssVar('--gridline') } } },
+      // 总量曲线沿用「总量 = 绿」的语言（热力图/密度曲线同源），浅色下用深一档的绿
       series: [{
         type: 'line', data: events.map(e => e.total_tokens), smooth: true, symbol: 'none',
-        areaStyle: { color: 'rgba(90,169,230,.15)' }, lineStyle: { color: '#5aa9e6', width: 1.5 },
+        areaStyle: { color: isLight() ? 'rgba(48,164,99,.15)' : 'rgba(57,211,83,.15)' },
+        lineStyle: { color: isLight() ? '#30a14e' : '#39d353', width: 1.5 },
       }],
     }, true);
   } catch { /* 静默 */ }
@@ -551,7 +634,15 @@ document.getElementById('export-btn').addEventListener('click', () => {
  */
 function renderDensity(byDay) {
   const host = document.getElementById('ch-density');
-  if (!host || !byDay?.length) return;
+  if (!host) return;
+  if (!byDay?.length) {
+    host.classList.add('empty');
+    host.dataset.empty = '范围内无数据';
+    host.querySelector('canvas')?.remove();
+    return;
+  }
+  host.classList.remove('empty');
+  delete host.dataset.empty;
   const W = host.clientWidth || 300, H = host.clientHeight || 120;
   const dpr = window.devicePixelRatio || 1;
   let canvas = host.querySelector('canvas');
@@ -562,6 +653,9 @@ function renderDensity(byDay) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
+  const gridC = cssVar('--gridline', '#1d1d2a');
+  const labelC = cssVar('--dim', '#8a8aa0');
+  const lineC = isLight() ? '#30a14e' : '#39d353';
   const padL = 46, padR = 10, padT = 12, padB = 22;
   const iw = W - padL - padR, ih = H - padT - padB;
   const vals = byDay.map(d => d.total);
@@ -573,9 +667,9 @@ function renderDensity(byDay) {
   ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let k = 0; k <= 4; k++) {
     const y = padT + ih - (k / 4) * ih;
-    ctx.strokeStyle = '#1d1d2a'; ctx.lineWidth = 1;
+    ctx.strokeStyle = gridC; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
-    ctx.fillStyle = '#8a8aa0';
+    ctx.fillStyle = labelC;
     ctx.fillText(fmtShort(max * k / 4), padL - 6, y);
   }
   // x 轴日期（最多 8 个）
@@ -597,13 +691,13 @@ function renderDensity(byDay) {
     ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
   };
   const grad = ctx.createLinearGradient(0, padT, 0, padT + ih);
-  grad.addColorStop(0, 'rgba(57, 211, 83, 0.42)');
+  grad.addColorStop(0, isLight() ? 'rgba(48,164,99,.38)' : 'rgba(57, 211, 83, 0.42)');
   grad.addColorStop(1, 'rgba(57, 211, 83, 0.03)');
   stroke();
   ctx.lineTo(px(vals.length - 1), padT + ih); ctx.lineTo(px(0), padT + ih); ctx.closePath();
   ctx.fillStyle = grad; ctx.fill();
   stroke();
-  ctx.strokeStyle = '#39d353'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.strokeStyle = lineC; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
 
   // 自管理悬停（复用 heat-tip 样式）
   host.__densityData = byDay;
@@ -644,34 +738,50 @@ function renderDensity(byDay) {
 }
 
 function renderModel(byModel) {
+  if (!byModel?.length) return markEmpty('model');
+  clearEmpty('model');
   const rows = [...byModel].reverse(); // 横向条形图自下而上
+  // 与按天花费共用展示名与色槽：同一模型在两张图里恒同色
+  const names = rows.map(r => displayModelName(r.model) || '(未知)');
+  const slots = assignSlots(names, MODEL_PALETTE.length, MODEL_SLOT);
   charts.model.setOption({
-    animationDuration: 300,
+    animation: false,
     grid: { left: 130, right: 40, top: 10, bottom: 30 },
     tooltip: chartTooltip('model', {
       formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${rows[p.dataIndex].n} 次调用`,
     }),
-    xAxis: { type: 'value', axisLabel: { color: '#8a8aa0', formatter: fmtShort }, splitLine: { lineStyle: { color: '#1d1d2a' } } },
-    yAxis: { type: 'category', data: rows.map(r => r.model || '(未知)'), axisLabel: { color: '#c7c7d8', fontSize: 11 } },
+    xAxis: { type: 'value', axisLabel: { color: cssVar('--dim'), formatter: fmtShort }, splitLine: { lineStyle: { color: cssVar('--gridline') } } },
+    yAxis: { type: 'category', data: names, axisLabel: { color: cssVar('--text-soft'), fontSize: 11, width: 118, overflow: 'truncate' } },
     series: [{
-      type: 'bar', data: rows.map(r => r.total), barMaxWidth: 16,
-      itemStyle: { color: '#5aa9e6', borderRadius: [0, 3, 3, 0] },
-      label: { show: true, position: 'right', color: '#8a8aa0', fontSize: 11, formatter: (p) => fmtShort(p.value) },
+      type: 'bar',
+      data: rows.map((r, i) => ({ value: r.total, itemStyle: { color: MODEL_PALETTE[slots.get(names[i])], borderRadius: [0, 3, 3, 0] } })),
+      barMaxWidth: 16,
+      label: { show: true, position: 'right', color: cssVar('--dim'), fontSize: 11, formatter: (p) => fmtShort(p.value) },
     }],
   }, true);
 }
 
 function renderTool(byTool) {
+  if (!byTool?.length) return markEmpty('tool');
+  clearEmpty('tool');
+  // 13 个工具的外部标签必然拥挤交叠、引线穿插：改图例置底 + 悬浮详情，环心放总量
+  const total = byTool.reduce((s, r) => s + r.total, 0);
   charts.tool.setOption({
-    animationDuration: 300,
+    animation: false,
+    title: {
+      text: fmtShort(total), subtext: '总 tokens', left: 'center', top: '32%',
+      textStyle: { color: cssVar('--text'), fontSize: 18, fontWeight: 650 },
+      subtextStyle: { color: cssVar('--dim'), fontSize: 11 },
+    },
+    legend: { textStyle: { color: cssVar('--dim'), fontSize: 11 }, bottom: 0, itemWidth: 14, itemHeight: 9, itemGap: 10 },
     tooltip: chartTooltip('tool', {
-      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · ${byTool[p.dataIndex].n} 次调用`,
+      formatter: (p) => `${esc(p.name)}<br/>tokens ${fmt(p.value)} · 占比 ${p.percent}% · ${byTool[p.dataIndex].n} 次`,
     }),
     series: [{
-      type: 'pie', radius: ['52%', '76%'], center: ['50%', '52%'],
-      itemStyle: { borderColor: '#14141c', borderWidth: 2 },
-      label: { color: '#c7c7d8', fontSize: 12, formatter: '{b}\n{d}%' },
-      data: byTool.map(r => ({ name: TOOL_LABEL[r.tool] || r.tool, value: r.total, itemStyle: { color: TOOL_COLORS[r.tool] } })),
+      type: 'pie', radius: ['44%', '66%'], center: ['50%', '40%'],
+      itemStyle: { borderColor: cssVar('--panel'), borderWidth: 2 },
+      label: { show: false }, labelLine: { show: false },
+      data: byTool.map(r => ({ name: TOOL_LABEL[r.tool] || r.tool, value: r.total, itemStyle: { color: toolColor(r.tool, OTHER_COLOR) } })),
     }],
   }, true);
 }
@@ -775,7 +885,7 @@ function renderHeatmap(byDayAll) {
     data.push([key, dayMap.get(key) || 0]);
   }
   const max = Math.max(...data.map(x => x[1]), 1);
-  const STOPS = [HEAT_EMPTY, ...HEAT_COLORS];
+  const STOPS = [heatEmpty(), ...heatColors()];
   const colorOf = (v) => {
     if (v <= 0) return HEAT_EMPTY;
     const r = v / max;
@@ -784,7 +894,7 @@ function renderHeatmap(byDayAll) {
   };
 
   charts.heat.setOption({
-    animationDuration: 300,
+    animation: false,
     calendar: {
       range: [start, end],
       left: 14, top: 6, bottom: 26,
@@ -792,7 +902,7 @@ function renderHeatmap(byDayAll) {
       splitLine: { show: false },
       itemStyle: { color: 'rgba(0,0,0,0)', borderWidth: 0 }, // 底格透明，统一由 custom 绘制
       yearLabel: { show: false },
-      monthLabel: { position: 'end', color: '#8a8aa0', fontSize: 11, nameMap: 'cn',
+      monthLabel: { position: 'end', color: cssVar('--dim'), fontSize: 11, nameMap: 'cn',
         formatter: (p) => p.nameMap || `${p.MM}月` },
       dayLabel: { show: false },
     },
@@ -817,7 +927,7 @@ function renderHeatmap(byDayAll) {
   const legend = document.getElementById('heat-legend');
   if (legend) {
     legend.innerHTML = '<span>少</span>' +
-      [HEAT_EMPTY, ...HEAT_COLORS].map(c => `<i style="background:${c}"></i>`).join('') +
+      [heatEmpty(), ...heatColors()].map(c => `<i style="background:${c}"></i>`).join('') +
       '<span>多</span>';
   }
 }
@@ -847,26 +957,133 @@ function setHeatMode(m) {
 }
 
 function renderFeed(recent) {
-  document.getElementById('feed').innerHTML = `<table>
-    <thead><tr><th>时间</th><th>工具</th><th>模型</th><th>项目</th><th>输入</th><th>缓存读</th><th>输出</th></tr></thead>
+  const host = document.getElementById('feed');
+  if (!recent?.length) {
+    host.innerHTML = '<div class="empty-note">范围内无请求</div>';
+    return;
+  }
+  host.innerHTML = `<table>
+    <thead><tr><th>时间</th><th>工具</th><th>模型</th><th>项目</th><th class="num">输入</th><th class="num">缓存读</th><th class="num">输出</th></tr></thead>
     <tbody>${recent.map(e => `<tr>
       <td class="dim">${hhmm(e.ts)}</td>
       <td><span class="badge ${esc(e.tool)}">${esc(TOOL_LABEL[e.tool] || e.tool)}</span></td>
-      <td>${esc(e.model) || '<span class="dim">-</span>'}</td>
+      <td>${esc(prettyModel(e.model)) || '<span class="dim">-</span>'}</td>
       <td class="dim">${esc(e.project) || '-'}</td>
-      <td>${fmtShort(e.input_tokens)}</td>
-      <td class="dim">${fmtShort(e.cached_input)}</td>
-      <td>${fmtShort(e.output_tokens)}</td>
+      <td class="num">${fmt(e.input_tokens)}</td>
+      <td class="num dim">${fmt(e.cached_input)}</td>
+      <td class="num">${fmt(e.output_tokens)}</td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+function setTopView(view) {
+  topView = view;
+  const leaderboard = view === 'leaderboard';
+  document.getElementById('overview-panel').hidden = leaderboard;
+  document.getElementById('lb-panel').hidden = !leaderboard;
+  const tab = document.getElementById('lb-tab');
+  tab.classList.toggle('on', leaderboard);
+  tab.setAttribute('aria-pressed', String(leaderboard));
+  document.querySelectorAll('#range button[data-days]').forEach(button => {
+    const selected = !leaderboard && Number(button.dataset.days) === days;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
 }
 
 document.getElementById('range').addEventListener('click', (ev) => {
   const btn = ev.target.closest('button');
   if (!btn) return;
-  document.querySelectorAll('#range button').forEach(b => b.classList.toggle('on', b === btn));
+  if (btn.id === 'lb-tab') {
+    setTopView('leaderboard');
+    loadLeaderboard();
+    return;
+  }
+  // 主题和 CSV 是独立动作，不能被当成时间范围或改变当前面板。
+  if (btn.dataset.days === undefined) return;
   days = Number(btn.dataset.days);
+  setTopView('overview');
   load();
 });
+
+/* ---------- 社区排行榜 ----------
+ * 数据来自远端榜单服务（经本地 /api/leaderboard 代理），与本地 summary 渲染完全独立：
+ * 榜单挂了只影响这一块。昵称是其他用户输入的自由文本，展示前一律 esc()。 */
+let lbPeriod = 'day';
+let lbRequest = 0;
+
+async function loadLeaderboard() {
+  if (topView !== 'leaderboard') return;
+  const body = document.getElementById('lb-body');
+  const requestId = ++lbRequest;
+  try {
+    const res = await fetch(`/api/leaderboard?period=${lbPeriod}`);
+    if (!res.ok) throw new Error(`服务返回 ${res.status}`);
+    const data = await res.json();
+    if (requestId === lbRequest) renderLeaderboard(data);
+  } catch (err) {
+    if (requestId === lbRequest) body.innerHTML = `<div class="empty-note">榜单获取失败：${esc(err.message)}</div>`;
+  }
+}
+
+function renderLeaderboard(data) {
+  const body = document.getElementById('lb-body');
+  const note = document.getElementById('lb-note');
+  const p = data?.participating || {};
+  const b = data?.board;
+
+  if (p.enabled) {
+    note.innerHTML = p.last_error
+      ? `已参与（${esc(p.name)}）· 上次上报失败：${esc(p.last_error)}，每小时自动重试`
+      : `已参与（${esc(p.name)}）${b?.me_rank ? ` · 我的排名 <b>#${esc(b.me_rank)}</b>` : ' · 等待上报进入榜单'}`;
+  } else {
+    note.textContent = '未参与——本机数据不出网。想加入：终端执行 token-watcher leaderboard on <昵称>';
+  }
+
+  if (b?.period && b.period !== lbPeriod) {
+    body.innerHTML = '<div class="empty-note">榜单服务尚未支持此周期，请更新并重启本地服务后重试。</div>';
+    return;
+  }
+  if (!b?.rows?.length) {
+    const msg = b ? '榜单暂无人上榜，来当第一个' : `榜单服务不可达${data?.error ? `（${esc(data.error)}）` : ''}`;
+    body.innerHTML = `<div class="empty-note">${msg}</div>`;
+    return;
+  }
+  const upd = new Date(b.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  note.innerHTML += ` <span class="dim">· ${esc(b.players)} 人上榜 · ${upd} 更新</span>`;
+
+  const roiCell = (r) => r.roi == null
+    ? '<span class="dim">—</span>'
+    : `<b class="${r.roi >= 1 ? 'lb-roi-good' : 'dim'}">×${esc(r.roi)}</b>`;
+  const modelWindow = { day: '今日 UTC', week: '近 7 日', month: '近 30 日' }[lbPeriod];
+  const chips = (r) => {
+    // 老服务未返回 models_period 时，其 models 仅代表近 7 天。
+    if ((r.models_period ?? 'week') !== lbPeriod) return '<span class="dim">待上报当期模型</span>';
+    return (r.models || []).slice(0, 1)
+      .map(([m, pct]) => `<span class="lb-chip">${esc(prettyModel(m))} ${esc(pct)}%</span>`).join('');
+  };
+  const tokens = (r) => r[{ day: 'day_tokens', week: 'week_tokens', month: 'month_tokens' }[lbPeriod]] || 0;
+  body.innerHTML = `<table>
+    <thead><tr><th>#</th><th>昵称</th><th class="num">tokens</th><th class="num">ROI</th><th title="所选周期 Token 总量最多的模型；占比以同期全部 Token 为分母">主力模型（${modelWindow}）</th></tr></thead>
+    <tbody>${b.rows.map(r => `<tr class="${b.me_rank === r.rank ? 'lb-me' : ''}" title="更新于 ${new Date(r.updated_at).toLocaleString('zh-CN')}">
+      <td class="lb-rank${r.rank <= 3 ? ' top' : ''}">${esc(r.rank)}</td>
+      <td class="lb-name">${esc(r.name)}</td>
+      <td class="num">${fmt(tokens(r))}</td>
+      <td class="num">${roiCell(r)}</td>
+      <td>${chips(r) || '<span class="dim">-</span>'}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+for (const [id, mode] of [['lb-day', 'day'], ['lb-week', 'week'], ['lb-month', 'month']]) {
+  document.getElementById(id).addEventListener('click', () => {
+    if (lbPeriod === mode) return;
+    lbPeriod = mode;
+    document.getElementById('lb-day').classList.toggle('on', mode === 'day');
+    document.getElementById('lb-week').classList.toggle('on', mode === 'week');
+    document.getElementById('lb-month').classList.toggle('on', mode === 'month');
+    loadLeaderboard();
+  });
+}
+setInterval(loadLeaderboard, 300_000);
 
 /* SSE 实时更新 */
 function connectSSE() {

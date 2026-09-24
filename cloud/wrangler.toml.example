@@ -1,0 +1,21 @@
+# 复制为 wrangler.toml 后填入自己的 database_id（创建步骤见 cloud/README.md）
+name = "token-watcher-leaderboard"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[observability]
+enabled = false
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "2026092401"
+simple = { limit = 60, period = 60 }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "token-watcher-leaderboard"
+database_id = "<wrangler d1 create 输出的 database_id>"

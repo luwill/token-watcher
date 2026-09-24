@@ -6,6 +6,7 @@ import { SOURCES, DB_PATH, DATA_DIR, isOffline } from './config.js';
 import { computeHealth } from './server.js';
 import { zcodeQuotaTargets } from './zcodeQuota.js';
 import { readClaudeOauthToken } from './claudeUsage.js';
+import { getLeaderboardState } from './leaderboard.js';
 
 /**
  * token-watcher doctor：把面板上的健康自检带到终端，外加环境与库体检。
@@ -69,6 +70,18 @@ export async function runDoctor(store, scannerStats, { log = console.log } = {})
   log(`  ${claudeTok ? '✓' : '·'} Claude Code OAuth 凭证${claudeTok ? '（官方配额轮询可用）' : '（无 → 面板用 5h 窗口推算兜底）'}`);
   const zcodeTargets = await zcodeQuotaTargets().catch(() => []);
   log(`  ${zcodeTargets.length ? '✓' : '·'} ZCode coding-plan API key${zcodeTargets.length ? `（GLM 配额轮询可用，${zcodeTargets.length} 个）` : '（无 → GLM 配额卡跳过，不影响其他功能）'}`);
+
+  // 排行榜是唯一的出网数据通道，参与状态必须可见（默认关闭也如实展示，不制造"偷偷上报"疑虑）
+  log('社区排行榜');
+  const lb = getLeaderboardState(store);
+  if (!lb.enabled) {
+    log('  · 未参与（默认；token-watcher leaderboard on <昵称> 加入，只上报聚合数字）');
+  } else {
+    const when = lb.last_push_ms ? new Date(lb.last_push_ms).toLocaleString('zh-CN') : '尚未上报';
+    log(`  ${lb.last_error ? '⚠' : '✓'} 已参与（昵称「${lb.name}」→ ${lb.url}）`);
+    log(`    上次上报 ${when}${lb.last_error ? ` · 失败：${lb.last_error}` : ''}`);
+    // 上报失败只警示不置 error：可选的虚荣功能不应把整个 doctor 判红
+  }
 
   log(problems.length ? `结论：${problems.length} 项需要处理（见上）` : '结论：未发现问题');
   return { ok: problems.length === 0, problems };

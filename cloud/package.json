@@ -1,0 +1,13 @@
+{
+  "name": "token-watcher-leaderboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "4.138.0"
+  }
+}

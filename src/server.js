@@ -13,6 +13,7 @@ import { zcodeQuotaView, ZcodeQuotaPoller } from './zcodeQuota.js';
 import { CursorUsagePoller } from './cursorUsage.js';
 import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
+import { scheduleLeaderboardUpload, getLeaderboardState, fetchLeaderboard } from './leaderboard.js';
 
 const DB_DIRPATH = dirname(DB_PATH);
 
@@ -38,6 +39,14 @@ function startOfDay(d = new Date()) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x.getTime();
+}
+
+/** 0 表示全部；空值/非法值回落到 30 天，合法范围限制为整数天。 */
+function parseRangeDays(value) {
+  if (value === null || value.trim() === '') return 30;
+  const days = Number(value);
+  if (!Number.isFinite(days) || !Number.isInteger(days) || days < 0) return 30;
+  return Math.min(3650, days);
 }
 
 /** 连续使用天数：从今天（或昨天）往前数有用量的连续自然日 */
@@ -240,6 +249,21 @@ async function serveFile(res, path, type) {
 
 function db_safe(store) { return store.db; }
 
+/** 榜单远端结果缓存（url|period → {at, data}）：面板每分钟轮询，远端一小时才变一次 */
+const boardCache = new Map();
+async function cachedBoard(state, period) {
+  const key = `${state.url}|${period}|${state.enabled ? state.id : ''}`;
+  const hit = boardCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.data;
+  const data = await fetchLeaderboard({
+    url: state.url,
+    id: state.enabled ? state.id : null, // 未参与时不发匿名 ID，最小暴露
+    period,
+  });
+  boardCache.set(key, { at: Date.now(), data });
+  return data;
+}
+
 /** Host 头是否指向本机（端口无关）；缺失 Host 的裸 HTTP/1.0 请求按本机放行 */
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '']);
 function isLocalHost(host) {
@@ -328,6 +352,7 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
     zcodePoller.start();
   }
   scheduleBackup(store, log);
+  scheduleLeaderboardUpload(store, { log }); // 榜单上报（默认关闭时每次 tick 直接跳过）
   onPricesLoaded(notify);                          // 价格加载/刷新后推送前端
   onFxLoaded(notify);                              // 汇率加载/刷新后推送前端
   ensurePrices().catch(() => {});
@@ -348,7 +373,7 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
     const p = url.pathname;
 
     if (p === '/api/summary') {
-      const days = Math.max(0, Math.min(3650, Number(url.searchParams.get('days')) || 30));
+      const days = parseRangeDays(url.searchParams.get('days'));
       try {
         return json(res, 200, await buildSummary(store, scanner.stats, days, {
           balanceStatus: balancePoller?.status?.() ?? [],
@@ -396,7 +421,7 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
       return json(res, 200, { days, tools: [...merged.values()].sort((a, b) => b.n - a.n).slice(0, 14) });
     }
     if (p === '/api/export.csv') {
-      const days = Math.max(0, Math.min(3650, Number(url.searchParams.get('days')) || 30));
+      const days = parseRangeDays(url.searchParams.get('days'));
       const since = days > 0 ? startOfDay() - (days - 1) * 86_400_000 : 0;
       const rows = db_safe(store).prepare(`
         SELECT date(ts/1000, 'unixepoch', 'localtime') d, tool,
@@ -411,6 +436,28 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
         'content-disposition': `attachment; filename="token-watcher-${days || 'all'}d.csv"`,
       });
       return res.end(csv);
+    }
+    if (p === '/api/leaderboard') {
+      const requestedPeriod = url.searchParams.get('period');
+      const period = ['week', 'month'].includes(requestedPeriod) ? requestedPeriod : 'day';
+      const st = getLeaderboardState(store);
+      let board = null, error = null;
+      if (isOffline()) error = '离线模式：跳过榜单服务请求';
+      else {
+        try { board = await cachedBoard(st, period); }
+        catch (err) { error = String(err?.message ?? err).slice(0, 120); } // 榜单挂了不影响面板其余部分
+      }
+      return json(res, 200, {
+        period,
+        participating: {
+          enabled: st.enabled,
+          name: st.name,
+          last_push_ms: st.last_push_ms,
+          last_error: st.last_error,
+        },
+        board,
+        error,
+      });
     }
     if (p === '/api/stream') {
       res.writeHead(200, {

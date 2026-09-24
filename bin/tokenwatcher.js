@@ -9,6 +9,8 @@
  *   tokenwatcher sessions [--day D | --from F --to T] [--csv|--json] [--git] [--out F]
  *                                                  会话级统计导出（--git 挂 git 提交归因）
  *   tokenwatcher wrapped [--year 2026] [--json]    年度用量报告
+ *   tokenwatcher leaderboard [on <昵称>|off|status|push|url <地址>]
+ *                                                  社区排行榜（默认关闭，显式开启）
  *   tokenwatcher doctor                            环境与数据源体检
  *   tokenwatcher install-agent [--port 8787]       装成 macOS 开机自启服务
  *   tokenwatcher uninstall-agent                   停止并移除该服务
@@ -21,20 +23,14 @@
 import { existsSync, renameSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { parseArgs } from '../src/cliArgs.js';
 import { Store } from '../src/store.js';
 import { Scanner } from '../src/scanner.js';
 import { startServer } from '../src/server.js';
 import { BalancePoller } from '../src/balance.js';
-import { DB_PATH, DEFAULT_PORT } from '../src/config.js';
+import { DB_PATH } from '../src/config.js';
 
 const VERSION = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version;
-
-// 一次性迁移：旧 ~/.token-stats → ~/.tokenmeter
-const LEGACY = join(homedir(), '.token-stats');
-const NEWDIR = join(homedir(), '.tokenmeter');
-if (existsSync(LEGACY) && !existsSync(NEWDIR)) renameSync(LEGACY, NEWDIR);
-const LEGACY_DB = join(NEWDIR, 'token-stats.db');
-if (existsSync(LEGACY_DB) && !existsSync(DB_PATH)) renameSync(LEGACY_DB, DB_PATH);
 
 const log = (msg) => console.log(`[token-watcher] ${msg}`);
 
@@ -48,37 +44,10 @@ function installDaemonGuards() {
   process.on('uncaughtException', (err) => log(`uncaught exception: ${err?.stack ?? err}`));
 }
 
-const COMMANDS = [
-  'scan', 'serve', 'today', 'sessions', 'wrapped', 'roi', 'doctor',
-  'install-agent', 'uninstall-agent', 'uninstall', 'bar',
-];
-
-function parseArgs(argv) {
-  const args = { cmd: 'serve', port: DEFAULT_PORT, force: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (COMMANDS.includes(a)) args.cmd = a;
-    else if (a === '--port' || a === '-p') { args.port = Number(argv[i + 1]) || DEFAULT_PORT; args.portExplicit = true; i++; }
-    else if (a === '--force') args.force = true;
-    else if (a === '--json') args.json = true;
-    else if (a === '--light') args.light = true;
-    else if (a === '--csv') args.csv = true;
-    else if (a === '--git') args.git = true;
-    else if (a === '--day') { args.day = argv[++i]; }
-    else if (a === '--from') { args.from = argv[++i]; }
-    else if (a === '--to') { args.to = argv[++i]; }
-    else if (a === '--out' || a === '-o') { args.out = argv[++i]; }
-    else if (a === '--year') { args.year = Number(argv[++i]); }
-    else if (a === '--yes' || a === '-y') args.yes = true;
-    else if (a === '--purge-data') args.purgeData = true;
-    else if (a === '--no-open') args.noOpen = true;
-    else if (a === '--version' || a === '-v') args.version = true;
-    else if (a === '--help' || a === '-h') args.help = true;
-  }
-  return args;
-}
-
-const { cmd, port, force, ...opts } = parseArgs(process.argv.slice(2));
+let parsed;
+try { parsed = parseArgs(process.argv.slice(2)); }
+catch (err) { console.error(`[token-watcher] ${err.message}`); process.exit(1); }
+const { cmd, port, force, ...opts } = parsed;
 
 const BANNER = `token-watcher v${VERSION}
 
@@ -89,6 +58,8 @@ const BANNER = `token-watcher v${VERSION}
                                    会话统计导出（--git 附 git 提交归因）
   wrapped [--year Y] [--json]      年度报告
   roi [--json]                     订阅 ROI（本月 API 等值 vs 实付）
+  leaderboard [on <昵称>|off|status|push|url <地址>]
+                                   社区排行榜（默认关闭；只上报聚合数字）
   doctor                           环境与数据源体检
   install-agent / uninstall-agent  macOS 开机自启
   uninstall [--purge-data] [--yes] 摘除所有本机痕迹（数据默认保留）
@@ -98,6 +69,13 @@ const BANNER = `token-watcher v${VERSION}
 
 if (opts.version) { console.log(`token-watcher v${VERSION}`); process.exit(0); }
 if (opts.help) { console.log(BANNER); process.exit(0); }
+
+// 一次性迁移：旧 ~/.token-stats → ~/.tokenmeter
+const LEGACY = join(homedir(), '.token-stats');
+const NEWDIR = join(homedir(), '.tokenmeter');
+if (existsSync(LEGACY) && !existsSync(NEWDIR)) renameSync(LEGACY, NEWDIR);
+const LEGACY_DB = join(NEWDIR, 'token-stats.db');
+if (existsSync(LEGACY_DB) && !existsSync(DB_PATH)) renameSync(LEGACY_DB, DB_PATH);
 
 const fmt = (n) => {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
@@ -224,6 +202,50 @@ if (cmd === 'scan') {
       console.log(`${String(e.name).padEnd(16)} ${api.padEnd(16)} ${paid} ${ratio}`);
     }
     console.log('口径：API 等值为假设性折算（订阅含速率限制、API 可能有折扣价），仅作参考');
+  }
+  store.close();
+} else if (cmd === 'leaderboard') {
+  const lb = await import('../src/leaderboard.js');
+  const sub = opts.positionals?.[0] || 'status';
+  const arg1 = opts.positionals?.[1];
+  const usage = () => log('用法：tokenwatcher leaderboard on <昵称> | off | status | push | url <地址>');
+  try {
+    if (sub === 'on') {
+      if (!arg1) { usage(); log('昵称为必填（1-16 个字，不含链接/@）'); store.close(); process.exit(1); }
+      if (opts.url) lb.setLeaderboardConfig(store, { url: opts.url });
+      lb.setLeaderboardConfig(store, { enabled: true, name: arg1 });
+      log(`已加入社区排行榜：「${lb.getLeaderboardState(store).name}」`);
+      log('只上报聚合数字（今日/近 7 天/近 30 天 tokens、请求次数、模型与工具占比、订阅 ROI 比值），字段清单见 README');
+      const r = await lb.pushLeaderboardReport(store, { log });
+      if (r.skipped) log(`首次上报跳过（${r.skipped}），下次启动服务后每小时代报`);
+      else if (r.ok) log('首次上报成功，已在榜');
+      else log(`首次上报失败：${r.error}（之后每小时自动重试）`);
+    } else if (sub === 'off') {
+      lb.setLeaderboardConfig(store, { enabled: false });
+      log('已退出排行榜：本机不再上报；远端每日清理超过 30 天未更新的记录（正常调度下最迟约 31 天）');
+    } else if (sub === 'push') {
+      const r = await lb.pushLeaderboardReport(store, { log });
+      if (r.skipped) { log(`未上报（${r.skipped}）${r.skipped === 'disabled' ? '——先用 leaderboard on <昵称> 开启' : ''}`); }
+      else if (r.ok) log(`上报成功：今日 ${fmt(r.report.day_tokens)} / 近 7 天 ${fmt(r.report.week_tokens)} / 近 30 天 ${fmt(r.report.month_tokens)} tokens`);
+      else { log(`上报失败：${r.error}`); store.close(); process.exit(1); }
+    } else if (sub === 'url') {
+      if (!/^https?:\/\/.+/.test(arg1 ?? '')) { usage(); store.close(); process.exit(1); }
+      lb.setLeaderboardConfig(store, { url: arg1 });
+      log(`榜单服务地址已设为 ${arg1}（自托管部署见 cloud/README.md）`);
+    } else if (sub !== 'status') {
+      usage(); store.close(); process.exit(1);
+    } else {
+      const st = lb.getLeaderboardState(store);
+      log(`参与状态：${st.enabled ? `已参与（昵称「${st.name}」）` : '未参与（默认；tokenwatcher leaderboard on <昵称> 加入）'}`);
+      if (st.enabled) {
+        log(`榜单服务：${st.url}`);
+        log(`上次上报：${st.last_push_ms ? new Date(st.last_push_ms).toLocaleString('zh-CN') : '尚未上报'}${st.last_error ? ` · 失败：${st.last_error}` : ' · 正常'}`);
+      }
+    }
+  } catch (err) {
+    log(err.message);
+    store.close();
+    process.exit(1);
   }
   store.close();
 } else if (cmd === 'doctor') {

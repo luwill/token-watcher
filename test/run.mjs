@@ -37,6 +37,7 @@ console.log('\n[1] 语法检查');
     ...globSync(join(ROOT, 'bin/*.js')),
     ...globSync(join(ROOT, 'web/*.js')),
     ...globSync(join(ROOT, 'web/lib/*.js')),
+    ...globSync(join(ROOT, 'cloud/*.js')),
   ];
   for (const f of files) {
     const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
@@ -51,7 +52,7 @@ console.log('\n[1] 语法检查');
 console.log('\n[1b] import 冒烟（模块级错误）');
 {
   const { globSync } = await import('node:fs');
-  const mods = [...globSync(join(ROOT, 'src/**/*.js')), ...globSync(join(ROOT, 'web/lib/*.js'))];
+  const mods = [...globSync(join(ROOT, 'src/**/*.js')), ...globSync(join(ROOT, 'web/lib/*.js')), ...globSync(join(ROOT, 'cloud/*.js'))];
   ok('待冒烟模块非空', mods.length >= 15, `仅 ${mods.length} 个`);
   for (const f of mods) {
     const rel = f.replaceAll(ROOT + '/', '');
@@ -107,7 +108,7 @@ console.log('\n[2] 静态断言');
   ok('模型 Top10 悬浮次数取反转后的 rows（不再张冠李戴）',
     /rows\[p\.dataIndex\]\.n\} 次调用/.test(app), 'renderModel formatter');
   ok('工具调用榜悬浮明细同样取 rows',
-    /const t = rows\[p\.dataIndex\]\?\.tools \|\| \{\}/.test(app), 'renderToolActivity formatter');
+    /rows\[params\[0\]\?\.dataIndex\]/.test(app), 'renderToolActivity formatter');
 
   // 后端 500 时旧 load() 会在 render() 里抛 TypeError，页面静默停在旧数据上
   const loadFn = app.match(/async function load\([\s\S]*?\n\}/)?.[0] || '';
@@ -130,7 +131,7 @@ console.log('\n[2b] 前端纯函数（lib/）');
   const app = read(join(ROOT, 'web/app.js'));
   const lib = (f) => import(pathToFileURL(join(ROOT, 'web/lib', f)).href);
   const { pickSeries, assignSlots, stackTipFormatter, dayAxis, fillDays } = await lib('series.js');
-  const { esc, fmt, fmtShort, ymd, windowLabel, fmtCountdown } = await lib('format.js');
+  const { esc, fmt, fmtShort, ymd, windowLabel, fmtCountdown, prettyModel } = await lib('format.js');
   const { MODEL_PALETTE, TOOL_COLORS } = await lib('theme.js');
   const { chartTooltip, tooltipPosition } = await lib('tooltip.js');
 
@@ -162,6 +163,20 @@ console.log('\n[2b] 前端纯函数（lib/）');
   ok('fmt 亿分档', fmt(123456789) === '1.23 亿', fmt(123456789));
   ok('fmtShort K/M 分档', fmtShort(1500) === '2K' && fmtShort(1500000) === '1.5M',
     `${fmtShort(1500)} ${fmtShort(1500000)}`);
+
+  // ---- 模型展示名：连字符次版本点化，仅展示层；键/牌价查找不受影响 ----
+  ok('prettyModel 点化 claude 连字符版本',
+    prettyModel('claude-opus-5-5') === 'claude-opus-5.5', prettyModel('claude-opus-5-5'));
+  ok('prettyModel 点化带日期后缀的 id',
+    prettyModel('claude-haiku-4-5-20251001') === 'claude-haiku-4.5-20251001', prettyModel('claude-haiku-4-5-20251001'));
+  ok('prettyModel 点化旧式前置版本 claude-3-7-sonnet',
+    prettyModel('claude-3-7-sonnet') === 'claude-3.7-sonnet', prettyModel('claude-3-7-sonnet'));
+  ok('prettyModel 不动已带点的名字',
+    prettyModel('glm-5.3') === 'glm-5.3' && prettyModel('gpt-5.6-sol') === 'gpt-5.6-sol'
+    && prettyModel('deepseek-v4.1-flash') === 'deepseek-v4.1-flash' && prettyModel('gpt-6-astra') === 'gpt-6-astra');
+  ok('prettyModel 避开日期快照后缀',
+    prettyModel('gpt-4-0613') === 'gpt-4-0613' && prettyModel('water18-0910') === 'water18-0910');
+  ok('prettyModel 容错非字符串', prettyModel(null) == null && prettyModel('') === '');
 
   // ---- 日期轴：两个按天图共用一条轴，否则同一天落在不同的 x 上 ----
   const sparse = [{ day: '2026-09-13' }, { day: '2026-09-15' }];
@@ -283,6 +298,17 @@ console.log('\n[2c] 后端健壮性');
   const st = new Store(join(tmp, 'x.db'));
   const bt = Object.values(st.db.prepare('PRAGMA busy_timeout').get())[0];
   ok('Store 设置了 busy_timeout（并发读写不立刻 SQLITE_BUSY）', Number(bt) >= 1000, String(bt));
+  // 正式库已规范化 Codex 键；回退采集器后重扫不能重复入账。
+  const ce = { ts: 1, tool: 'codex', input_tokens: 10, output_tokens: 2, total_tokens: 12 };
+  st.insertEvent({ ...ce, dedup_key: 'codex:file:rollout-test:1' });
+  st.insertEvent({ ...ce, dedup_key: 'codex:/sessions/rollout-test.jsonl:1' });
+  st.insertEvent({ ...ce, output_tokens: 3, total_tokens: 13, dedup_key: 'codex:/archived_sessions/rollout-test.jsonl:1' });
+  const cr = st.db.prepare('SELECT COUNT(*) AS n, SUM(total_tokens) AS total FROM events').get();
+  ok('回退后 Codex 活跃/归档重扫不重复且可补全输出', cr.n === 1 && cr.total === 13);
+  const ct = { ts: 1, tool: 'codex', name: 'exec' };
+  st.insertToolCall({ ...ct, dedup_key: 'codex:tc:file:rollout-test:call-1' });
+  st.insertToolCall({ ...ct, dedup_key: 'codex:tc:/sessions/rollout-test.jsonl:call-1' });
+  ok('回退后 Codex 工具调用不重复', st.db.prepare('SELECT COUNT(*) AS n FROM tool_calls').get().n === 1);
   st.close();
   rmSync(tmp, { recursive: true, force: true });
 
@@ -959,6 +985,14 @@ console.log('\n[4] API 冒烟');
     ok('ECharts 能取到（取不到就整页空白）', ec.status === 200, String(ec.status));
     ok('ECharts 内容像是 JS 而非错误页',
       (ec.headers.get('content-type') || '').includes('javascript'), ec.headers.get('content-type'));
+
+    // 排行榜路由：离线模式下远端榜单拿不到也不许 500，参与状态如实返回默认关闭
+    const lbRes = await fetch(`http://127.0.0.1:${port}/api/leaderboard?period=day`);
+    const lb = await lbRes.json();
+    ok('leaderboard 路由 200（离线降级 board=null）',
+      lbRes.status === 200 && lb.participating?.enabled === false && lb.board === null
+      && lb.period === 'day' && typeof lb.error === 'string',
+      JSON.stringify(lb).slice(0, 120));
 
   }
   child.kill('SIGTERM');
@@ -1727,6 +1761,145 @@ console.log('\n[13] Claude 官方配额单元');
     rmSync(cHome, { recursive: true, force: true });
   }
 }
+
+/* ---------- 社区排行榜 ----------
+ * 三条红线：默认不上传（fetch 注入炸弹也不许被调）、payload 只含聚合字段、
+ * 客户端与云端两份校验（src/ vs cloud/）行为完全一致——漂移即漏防/误杀。 */
+console.log('\n[LB] 社区排行榜');
+{
+  const { sanitizeName, clampReport, buildLeaderboardReport, pushLeaderboardReport,
+    getLeaderboardState, setLeaderboardConfig, ensureLeaderboardId, LEADERBOARD_URL_DEFAULT } =
+    await import(pathToFileURL(join(ROOT, 'src/leaderboard.js')).href);
+  const cloud = await import(pathToFileURL(join(ROOT, 'cloud/lib.js')).href);
+  const { Store } = await import(pathToFileURL(join(ROOT, 'src/store.js')).href);
+
+  // 昵称清洗：两侧实现喂同一组用例
+  const names = [
+    ['张三', '张三'], ['  Lou  Will ', 'Lou Will'], ['x'.repeat(16), 'x'.repeat(16)],
+    ['x'.repeat(17), null], ['', null], [null, null], ['a@b', null],
+    ['visit https://x.io', null], ['www.foo.com', null], ['spam.io 群发', null],
+    ['官方小助手', null], ['fuck', null], ['a\u0000b\u200bc', 'abc'], ['emoji👍ok', 'emoji👍ok'],
+  ];
+  for (const [raw, want] of names) {
+    const c = sanitizeName(raw), s = cloud.sanitizeName(raw);
+    ok(`sanitizeName 两侧一致 ${JSON.stringify(String(raw)).slice(0, 24)}`,
+      c === want && s === want, `client=${JSON.stringify(c)} cloud=${JSON.stringify(s)} want=${JSON.stringify(want)}`);
+  }
+
+  // clamp：负数归零/封顶/截断，且两侧输出全等
+  const input = { id: 'i'.repeat(100), name: 'n'.repeat(40), day: '2026-09-24',
+    day_tokens: -5, day_requests: 2e9, week_tokens: 5e13, month_tokens: 1e15, roi_ratio: 99999,
+    models: [['glm-5.3', 500], ['', 10], ['m'.repeat(80), 3]], tools: 'x',
+    models_by_period: { day: [['claude-opus-5-5', 150], ['other', 20]], week: null, month: [] } };
+  const c1 = clampReport(input), c2 = cloud.clampReport(input);
+  ok('clamp 封顶与截断', c1.id.length === 64 && c1.day_tokens === 0 && c1.day_requests === 1e7
+    && c1.week_tokens === 1e13 && c1.month_tokens === 5e13 && c1.roi_ratio === 1e4 && c1.models.length === 2
+    && c1.models[0][1] === 100 && c1.models[1][0].length === 60, JSON.stringify(c1));
+  ok('周期模型仅保留合法周期第一名并钳制占比', c1.models_by_period.day.length === 1 &&
+    c1.models_by_period.day[0][1] === 100 && !('week' in c1.models_by_period) && c1.models_by_period.month.length === 0);
+  ok('clamp 两侧全等', JSON.stringify(c1) === JSON.stringify(c2));
+  ok('非法 day 置 null（两侧）', clampReport({ day: '09-24-2026' }).day === null
+    && cloud.clampReport({ day: 'x' }).day === null);
+  // Number(null)=0 会把"未配置 ROI"钳成 ×0 上榜——手动对 mock 验证时抓到的
+  ok('roi_ratio null 保持 null（两侧）', clampReport({ roi_ratio: null }).roi_ratio === null
+    && cloud.clampReport({ roi_ratio: null }).roi_ratio === null
+    && clampReport({ roi_ratio: undefined }).roi_ratio === null);
+
+  for (const value of [undefined, null, '123', NaN, Infinity]) {
+    ok('缺失或无效月总量保持未知 ' + String(value),
+      clampReport({ month_tokens: value }).month_tokens === null &&
+      cloud.clampReport({ month_tokens: value }).month_tokens === null);
+  }
+
+  // settings + 默认关闭
+  const tmpLb = mkdtempSync(join(tmpdir(), 'tw-lb-'));
+  const store = new Store(join(tmpLb, 'lb.db'));
+  const st0 = getLeaderboardState(store);
+  ok('默认关闭且地址回落官方实例', st0.enabled === false && st0.url === LEADERBOARD_URL_DEFAULT);
+  ok('未开启时绝不上报', (await pushLeaderboardReport(store,
+    { fetchImpl: () => { throw new Error('must not fetch'); } })).skipped === 'disabled');
+
+  // 开启 + 聚合上报
+  setLeaderboardConfig(store, { enabled: true, name: ' 张三 ' });
+  const st1 = getLeaderboardState(store);
+  ok('开启后昵称清洗入库并生成匿名 ID',
+    st1.enabled === true && st1.name === '张三' && /^[0-9a-f-]{36}$/.test(st1.id || ''));
+  ok('匿名 ID 幂等', ensureLeaderboardId(store) === st1.id);
+
+  // 统一 UTC 日榜，凌晨/跨时区运行结果不变。
+  const noon = new Date(); noon.setUTCHours(13, 0, 0, 0);
+  const NOW = noon.getTime();
+  const ins = (ts, model, tool, total) =>
+    store.insertEvent({ ts, tool, model, total_tokens: total, dedup_key: `lb-${ts}-${model}` });
+  ins(NOW - 60_000, 'glm-5.3', 'zcode', 1_500);
+  ins(NOW - 120_000, 'glm-5.3', 'zcode', 2_500);
+  ins(NOW - 3 * 86400_000, 'claude-sonnet-4.6', 'claude-code', 10_000);
+  ins(NOW - 8 * 86400_000, 'kimi-k3', 'kimi', 99_999); // 进入 30 日，不进本周
+  ins(NOW - 30 * 86400_000, 'boundary-model', 'codex', 7);
+  ins(NOW - 30 * 86400_000 - 1, 'too-old-model', 'codex', 123456);
+  ins(NOW + 86400_000, 'future-model', 'codex', 999_999); // 时钟异常不能提前入榜
+
+  let sent = null;
+  const fakeFetch = async (url, opts) => { sent = { url, body: JSON.parse(opts.body) }; return { ok: true }; };
+  const stubRoi = async () => ({ configured: true, entries: [
+    { paid_cny: 100, api_cny: 250 }, { paid_cny: null, api_cny: 5 }] });
+  const r1 = await pushLeaderboardReport(store, { fetchImpl: fakeFetch, now: NOW, roiFn: stubRoi });
+  ok('上报成功且地址正确', r1.ok === true && sent.url === `${LEADERBOARD_URL_DEFAULT}/report`, JSON.stringify(r1));
+  ok('今日/本周聚合正确', sent.body.day_tokens === 4_000 && sent.body.week_tokens === 14_000
+    && sent.body.day_requests === 2, JSON.stringify(sent.body));
+  ok('近 30 日包含窗口起点，排除过期和未来数据', sent.body.month_tokens === 114006, JSON.stringify(sent.body));
+  ok('模型占比按周降序取整', sent.body.models.length === 2
+    && sent.body.models[0][0] === 'claude-sonnet-4.6' && sent.body.models[0][1] === 71
+    && sent.body.models[1][0] === 'glm-5.3', JSON.stringify(sent.body.models));
+  ok('今日主力独立取今日 Token 第一名及同期占比', sent.body.models_by_period.day[0][0] === 'glm-5.3' && sent.body.models_by_period.day[0][1] === 100);
+  ok('周主力取周第一名', sent.body.models_by_period.week[0][0] === 'claude-sonnet-4.6' && sent.body.models_by_period.week[0][1] === 71);
+  ok('30 日主力取30日第一名，排除过期和未来模型', sent.body.models_by_period.month[0][0] === 'kimi-k3' && sent.body.models_by_period.month[0][1] === 88);
+  ok('ROI 只上报比值', sent.body.roi_ratio === 2.5, String(sent.body.roi_ratio));
+  const flat = JSON.stringify(sent.body);
+  ok('payload 不含敏感字段', !/project|session|path|key|home|user|prompt/i.test(flat), flat);
+  ok('上报状态入库', getLeaderboardState(store).last_ok_ms === NOW
+    && getLeaderboardState(store).last_error === null);
+
+  // 失败路径：网络异常 / 非 2xx / 离线——都不抛出，错误记录进设置
+  const r2 = await pushLeaderboardReport(store, { fetchImpl: async () => { throw new Error('boom'); }, now: NOW + 1000, roiFn: stubRoi });
+  ok('网络异常不抛出且记录错误', r2.ok === false && r2.error === 'boom'
+    && getLeaderboardState(store).last_error === 'boom');
+  const r3 = await pushLeaderboardReport(store, { fetchImpl: async () => ({ ok: false, status: 503 }), now: NOW + 2000, roiFn: stubRoi });
+  ok('非 2xx 视为失败', r3.ok === false && r3.error === 'HTTP 503');
+  const savedOffline = process.env.TOKENMETER_OFFLINE;
+  process.env.TOKENMETER_OFFLINE = '1';
+  const r4 = await pushLeaderboardReport(store, { fetchImpl: fakeFetch });
+  ok('离线模式跳过上报', r4.skipped === 'offline');
+  if (savedOffline === undefined) delete process.env.TOKENMETER_OFFLINE; else process.env.TOKENMETER_OFFLINE = savedOffline;
+
+  // 配置校验
+  let threw = false;
+  try { setLeaderboardConfig(store, { name: 'x'.repeat(20) }); } catch { threw = true; }
+  ok('非法昵称抛人话错误', threw);
+  threw = false;
+  try { setLeaderboardConfig(store, { url: 'ftp://x' }); } catch { threw = true; }
+  ok('非法地址抛错', threw);
+  for (const url of ['http://remote.example', 'https://u:p@example.com', 'https://example.com/?key=x']) {
+    threw = false;
+    try { setLeaderboardConfig(store, { url }); } catch { threw = true; }
+    ok(`不安全榜单地址被拒 ${url}`, threw);
+  }
+  const interrupted = await pushLeaderboardReport(store, { now: NOW, fetchImpl: () => {
+    throw new Error('must not send after opt-out');
+  }, roiFn: async () => { setLeaderboardConfig(store, { enabled: false }); return null; } });
+  ok('聚合途中退出后不发送', interrupted.skipped === 'config-changed');
+  setLeaderboardConfig(store, { url: 'https://self.example.com/' });
+  ok('自托管地址入库并去尾斜杠', getLeaderboardState(store).url === 'https://self.example.com');
+  setLeaderboardConfig(store, { enabled: false });
+  ok('off 后不再上报', (await pushLeaderboardReport(store, { fetchImpl: fakeFetch })).skipped === 'disabled');
+
+  store.close();
+  rmSync(tmpLb, { recursive: true, force: true });
+}
+
+await (await import('./leaderboard-worker.mjs')).testLeaderboardWorker(ok);
+await (await import('./leaderboard-ui.mjs')).testLeaderboardUi(ok);
+await (await import('./release-blockers.mjs')).testReleaseBlockers(ok);
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });

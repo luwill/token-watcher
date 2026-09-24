@@ -33,25 +33,41 @@
     <span id="live" class="live off" title="实时连接状态"><i></i>实时</span>
   </div>
   <nav id="range" class="range">
-    <button data-days="7" class="on">7 天</button>
-    <button data-days="30">30 天</button>
-    <button data-days="90">90 天</button>
-    <button data-days="0">全部</button>
-    <button id="export-btn" title="导出当前范围日粒度 CSV">导出 CSV</button>
+    <button data-days="7" class="on" aria-pressed="true" aria-controls="overview-panel">7 天</button>
+    <button data-days="30" aria-pressed="false" aria-controls="overview-panel">30 天</button>
+    <button data-days="90" aria-pressed="false" aria-controls="overview-panel">90 天</button>
+    <button data-days="0" aria-pressed="false" aria-controls="overview-panel">全部</button>
+    <button id="lb-tab" aria-pressed="false" aria-controls="lb-panel">社区排行榜</button>
+    <button id="export-btn" class="ghost" title="导出当前范围日粒度 CSV">导出 CSV</button>
+    <button id="theme-btn" class="icon-btn" title="切换浅色 / 深色主题" aria-label="切换主题">
+      <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
   </nav>
 </header>
 
 <main>
-  <div id="load-error" class="load-error" hidden></div>
-  <section class="cards" id="cards"></section>
+  <div id="overview-panel">
+    <div id="load-error" class="load-error" hidden></div>
+    <section class="cards" id="cards"></section>
 
-  <div id="quota-extra" class="quota-extra"></div>
-  <div id="quota-wide" class="quota-wide"></div>
+    <div id="quota-extra" class="quota-extra"></div>
+    <div id="quota-wide" class="quota-wide"></div>
 
-  <section class="health" id="health"></section>
+    <section class="health" id="health"></section>
+  </div>
+
+  <section class="panel lb-panel" id="lb-panel" aria-labelledby="lb-tab" hidden>
+    <h2 class="panel-head"><span>社区排行榜</span>
+      <span class="heat-modes"><button id="lb-day" class="on">今日（UTC）</button><button id="lb-week">近 7 天</button><button id="lb-month">近 30 日</button></span></h2>
+    <div id="lb-note" class="lb-note dim"></div>
+    <div id="lb-body" class="lb-body"><div class="empty-note">加载中…</div></div>
+    <div class="lb-foot dim">社区自报数据，未经验证 · 日榜按 UTC，近 7/30 日为滚动统计 · ROI 为本月比值 · 终端执行 token-watcher leaderboard on &lt;昵称&gt; 加入</div>
+  </section>
 
   <section class="panel heat">
-    <h2>Token 活动<span class="heat-modes"><button id="hm-d" class="on">每日</button><button id="hm-w">每周</button><button id="hm-c">累计</button></span></h2>
+    <h2 class="panel-head"><span>Token 活动</span>
+      <span class="heat-modes"><button id="hm-d" class="on">每日</button><button id="hm-w">每周</button><button id="hm-c">累计</button></span></h2>
     <div id="ch-heat" class="chart heat-chart"></div>
     <div class="heat-legend" id="heat-legend"></div>
   </section>
@@ -67,8 +83,8 @@
     </div>
     <div class="pair">
       <div class="panel" id="sessions-panel">
-        <h2>会话钻取 <span class="dim" style="font-weight:400" id="sess-day"></span>
-          <input type="date" id="sess-date" style="float:right;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px">
+        <h2 class="panel-head"><span>会话钻取 <span class="dim" id="sess-day"></span></span>
+          <input type="date" id="sess-date" class="date-input" aria-label="选择会话日期">
         </h2>
         <div id="sess-detail" class="chart" style="display:none;height:180px"></div>
         <div class="feed" id="sessions"></div>
@@ -81,7 +97,10 @@
     </div>
   </section>
 
-  <footer class="dim">数据源：Claude Code · ccmr · Codex · ZCode · dsh · WorkBuddy · Grok Build · Pi · OpenCode · Antigravity ≈ · Kimi Code · Qoder · Cursor ｜ 本地解析，实时监听 ｜ <span id="gen"></span></footer>
+  <footer class="dim">
+    <div class="foot-src" title="Antigravity 的 ≈ 表示其 token 数为按官方积分折算的估算值">数据源：Claude Code · ccmr · Codex · ZCode · dsh · WorkBuddy · Grok Build · Pi · OpenCode · Antigravity ≈ · Kimi Code · Qoder · Cursor</div>
+    <div>本地解析，实时监听 · 更新于 <span id="gen"></span></div>
+  </footer>
 </main>
 
 <script type="module" src="app.js"></script>

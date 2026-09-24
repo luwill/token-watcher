@@ -1,0 +1,33 @@
+{
+  "checked_at": "2026-09-24T15:24:56.784Z",
+  "worker": "token-watcher-leaderboard",
+  "url": "https://token-watcher-leaderboard.ygnjd2016.workers.dev",
+  "version_id": "505ae204-2403-44b7-a619-f286acd8db1e",
+  "database_name": "token-watcher-leaderboard",
+  "database_region": "WNAM",
+  "plan": "Workers Free",
+  "wrangler_version": "4.138.0",
+  "cron_utc": "17 3 * * *",
+  "regression_checks": 525,
+  "live_smoke_checks": 9,
+  "synthetic_data_cleaned": true,
+  "real_usage_uploaded": true,
+  "sha256": {
+    "cloud/worker.js": "a704601c15523cd6ac1628ff74e25e27e375e3425d86f0892941e32b480c6694",
+    "cloud/lib.js": "9a3d99d5a3aa00ea61e667524f079f0377b237ce83c02f267f404387d0cde605",
+    "cloud/schema.sql": "c7fadf2796ce5f20dd7e8de55d5520928643dbeb029afef666a47739efd4cda3",
+    "cloud/wrangler.toml": "d71d3c6d0ed046d7cdf2f01cc778dc526cf718e93e91a4fab47a553dceb5a000",
+    "cloud/package-lock.json": "2ed6fff8e037a71f04de99c4a0b92145aec435e1e27e2d2667c25e35cbbe3c59",
+    "cloud/migrations/0001_month_tokens.sql": "0bab9f4d6a7eb46bfe76fc72785a728c18792d9201cfbe302c79879a8acee48f",
+    "cloud/migrations/0002_period_models.sql": "9b8bdac5d2ba3bdbf9c5a98a899a2897dcc16720d8a2b4f0df90a5c71b3250ec"
+  },
+  "features": [
+    "day-week-month token boards",
+    "dominant model follows selected period"
+  ],
+  "migrations": [
+    "0001_month_tokens.sql",
+    "0002_period_models.sql"
+  ],
+  "real_usage_upload_authorized": true
+}

@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { normalizeModel } from './models.js';
+import { canonicalCodexKey, migrateCodexKeys } from './codexKeys.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -46,6 +47,11 @@ CREATE TABLE IF NOT EXISTS quota (
   data TEXT NOT NULL                      -- 最新配额快照 JSON（含 balance:* 余额）
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL                      -- JSON 编码；榜单开关/昵称/匿名 ID 等
+);
+
 CREATE TABLE IF NOT EXISTS rates (
   model TEXT PRIMARY KEY,
   fresh_rate REAL NOT NULL,               -- 积分 / 百万新输入 token
@@ -79,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_ts ON tool_calls(ts);
 
 /** 增量迁移：旧库补列、模型名归一（幂等，每次启动跑一遍，DISTINCT 很小） */
 function migrate(db) {
+  migrateCodexKeys(db);
   const cols = db.prepare('PRAGMA table_info(events)').all().map(c => c.name);
   if (!cols.includes('trace_id')) db.exec('ALTER TABLE events ADD COLUMN trace_id TEXT');
   const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_session'").get();
@@ -107,7 +114,8 @@ export class Store {
     // 常驻 serve 与一次性 CLI（today/scan）会并发访问同一库：不设超时则立刻 SQLITE_BUSY
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(SCHEMA);
-    migrate(this.db);
+    try { migrate(this.db); }
+    catch (err) { this.db.close(); throw err; }
     this._insertEvent = this.db.prepare(`
       INSERT OR IGNORE INTO events
         (ts, tool, model, session_id, project,
@@ -142,10 +150,11 @@ export class Store {
   }
 
   insertEvent(e) {
+    const dedupKey = e.tool === 'codex' ? canonicalCodexKey(e.dedup_key) : e.dedup_key;
     const r = this._insertEvent.run(
       e.ts, e.tool, e.model ?? null, e.session_id ?? null, e.project ?? null,
       e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
-      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0, e.dedup_key,
+      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0, dedupKey,
       e.trace_id ?? null
     );
     if (r.changes) return 1;
@@ -153,7 +162,7 @@ export class Store {
     this._supersedeEvent.run(
       e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
       e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
-      e.dedup_key, e.output_tokens || 0
+      dedupKey, e.output_tokens || 0
     );
     return 0; // 事件数不变，只是把已有行补全
   }
@@ -196,7 +205,7 @@ export class Store {
   }
 
   insertToolCall(e) {
-    return this._insertToolCall.run(e.ts, e.tool, e.name, e.session_id ?? null, e.dedup_key).changes;
+    return this._insertToolCall.run(e.ts, e.tool, e.name, e.session_id ?? null, e.tool === 'codex' ? canonicalCodexKey(e.dedup_key) : e.dedup_key).changes;
   }
 
   /** 积分账本（Qoder 等源）：幂等入账，返回是否为新行 */
@@ -221,6 +230,19 @@ export class Store {
 
   countEvents() {
     return this.db.prepare('SELECT COUNT(*) AS n, SUM(total_tokens) AS total FROM events').get();
+  }
+
+  getSetting(key) {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    if (!row) return null;
+    try { return JSON.parse(row.value); } catch { return null; }
+  }
+
+  setSetting(key, value) {
+    this.db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(key, JSON.stringify(value));
   }
 
   /** 供 CLI / 对账用 */

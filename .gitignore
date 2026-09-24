@@ -12,3 +12,8 @@ learnings/
 
 # npm pack 产物
 *.tgz
+
+# Local Cloudflare credentials/state and account-specific deployment config
+cloud/wrangler.toml
+.wrangler/
+.dev.vars*
