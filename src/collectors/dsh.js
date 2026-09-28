@@ -24,7 +24,8 @@ const ZSTD_BINS = ['zstd', '/opt/homebrew/bin/zstd', '/usr/local/bin/zstd', '/us
  *   total = input + cacheRead + cacheWrite + output（v3 自带 totalTokens，实测恒等）。
  * - 模型优先取记录自带的 data.message.source.model（v3 起每条都带），
  *   回落到顺序解析 request/header 维护的当前模型；cwd 来自 session 记录。
- * - 解压优先用 Node 内置 zstd，旧版 Node 回落到外部 zstd（含常见绝对路径），都没有则整源跳过。
+ * - 同一请求的 chunk、message 与新旧文件副本共用 session + turn + step 去重键。
+ * - 解压优先用外部 zstd（支持追加的多帧），仅单帧时可回落到 Node 内置实现。
  */
 /** zstd 帧魔数。dsh 按批追加独立帧，单个会话文件实测有数千帧 */
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
@@ -69,14 +70,14 @@ async function decompress(path) {
 export async function collectDshFile(store, { path, fileId }) {
   let inserted = 0;
   const text = await decompress(path);
-  // fileId 是父目录名。v3 迁移期新旧两个文件会并存于同一目录，若共用 dedup_key
-  // 命名空间，seq 相同的两条会互相顶掉，因此 v3 的键额外带上文件名。
-  // 旧结构的键保持原样，避免历史事件在重扫时被当成新行插一遍。
+  // seq 标识日志行，不是请求：同一次请求会有 chunk、message 两行，v3 副本还会
+  // 重排 seq。turn + step 在同一会话内才是请求身份，不能靠时间戳或用量猜测重复。
   const file = basename(path);
+  const requests = new Map();
   let model = null;
   let project = null;
 
-  const record = (rec, u, dedupKey, recModel) => {
+  const record = (rec, u, legacyKey, recModel) => {
     if (!u || !Number.isFinite(rec.time)) return;
     const input = u.inputTokens || 0;
     const cached = u.cacheReadTokens || 0;
@@ -84,7 +85,11 @@ export async function collectDshFile(store, { path, fileId }) {
     const output = u.outputTokens || 0;
     const total = input + cached + cacheWrite + output;
     if (total <= 0) return;
-    inserted += store.insertEvent({
+    const { turn, step } = rec.data;
+    const identified = Number.isSafeInteger(turn) && turn >= 0 && Number.isSafeInteger(step) && step >= 0;
+    // 无请求身份的旧格式保持原键，不能把 undefined/undefined 的所有请求合成一条。
+    const dedupKey = identified ? `dsh:request:${fileId}:${turn}:${step}` : legacyKey;
+    const event = {
       ts: rec.time,
       tool: 'dsh',
       model: normalizeModel(recModel ?? model),
@@ -97,7 +102,16 @@ export async function collectDshFile(store, { path, fileId }) {
       reasoning_tokens: u.reasoningTokens || 0,
       total_tokens: total,
       dedup_key: dedupKey,
-    });
+    };
+    const prev = requests.get(dedupKey);
+    const legacyKeys = prev?.legacyKeys ?? new Set();
+    if (identified) legacyKeys.add(legacyKey);
+    // 与 Store 的流式补齐规则一致：保留更完整的输出。用量相同时优先完整消息，
+    // 因为它还携带逐请求模型；保留所有旧键，迁移时才能同时清掉 chunk/message。
+    if (!prev || output > prev.event.output_tokens ||
+        (output === prev.event.output_tokens && rec.type === 'assistant/message')) {
+      requests.set(dedupKey, { event, legacyKeys });
+    }
   };
 
   for (const line of text.split('\n')) {
@@ -123,6 +137,9 @@ export async function collectDshFile(store, { path, fileId }) {
       record(rec, chunk?.type === 'usage' ? chunk.usage : null,
         `dsh:${fileId}:${rec.seq}:${rec.data?.turn ?? ''}:${rec.data?.step ?? ''}`);
     }
+  }
+  for (const { event, legacyKeys } of requests.values()) {
+    inserted += store.insertDshEvent(event, legacyKeys);
   }
   return { inserted };
 }

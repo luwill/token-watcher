@@ -131,6 +131,7 @@ export class Store {
         input_tokens = ?, cached_input = ?, cache_write = ?,
         output_tokens = ?, reasoning_tokens = ?, total_tokens = ?
       WHERE dedup_key = ? AND output_tokens < ?`);
+    this._deleteLegacyDshEvent = this.db.prepare("DELETE FROM events WHERE tool = 'dsh' AND dedup_key = ?");
     this._insertToolCall = this.db.prepare(`
       INSERT OR IGNORE INTO tool_calls (ts, tool, name, session_id, dedup_key)
       VALUES (?, ?, ?, ?, ?)`);
@@ -165,6 +166,19 @@ export class Store {
       dedupKey, e.output_tokens || 0
     );
     return 0; // 事件数不变，只是把已有行补全
+  }
+
+  /**
+   * DSH 从日志行键迁移到请求键。只删除这次原始快照中实际找到的旧键；不能清空整
+   * 个会话，新旧文件各自可能有独有请求，源文件消失的历史也不能凭猜测删除。
+   * Scanner 的文件事务保证新行、旧键删除与游标一起提交或一起回滚。
+   */
+  insertDshEvent(e, legacyKeys) {
+    const inserted = this.insertEvent(e);
+    for (const key of legacyKeys) {
+      if (key !== e.dedup_key) this._deleteLegacyDshEvent.run(key);
+    }
+    return inserted;
   }
 
   saveRates(model, fresh, cache, out, turns) {
