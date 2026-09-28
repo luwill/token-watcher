@@ -62,7 +62,9 @@ export const SOURCES = [
     roots: [join(HOME, '.codex/sessions'), join(HOME, '.codex/archived_sessions')],
     kind: 'jsonl',
     collector: 'codex',
-    version: 3, // v3: state 记录 parent_thread_id（resume 链模型继承）
+    // v4: 子代理/分叉文件开头重放的父会话历史不再计入；单次用量改取 last_token_usage。
+    // 存量行按旧规则多算过，需全量重扫重建
+    version: 4,
     subscription: true,
   },
   {

@@ -208,6 +208,29 @@ export class Store {
     return this._insertToolCall.run(e.ts, e.tool, e.name, e.session_id ?? null, e.tool === 'codex' ? canonicalCodexKey(e.dedup_key) : e.dedup_key).changes;
   }
 
+  /**
+   * 整文件重扫前，清掉这个 Codex rollout 按旧规则入库的事件与工具调用。
+   * 事件键是文件内序号，采集规则一变序号就错位：旧行既对不上也盖不掉，只能整文件重建。
+   *
+   * 同名文件可能同时躺在几个目录里（归档搬移、第三方工具复制）。只要其中一份已被
+   * 当前版本采集过，库里就是当前规则的行：这时不清，让后来的副本靠去重键并进去，
+   * 否则一份只抄了前半截的旧副本会冲掉原文件的后半截。
+   * 只按键的区间删（':' 的下一个字符是 ';'），文件名只是前缀相同的不会被波及。
+   */
+  dropStaleCodexRows(stem, path, version) {
+    const siblings = this.db.prepare(
+      "SELECT state_json FROM files WHERE tool = 'codex' AND session_id = ? AND path <> ?").all(stem, path);
+    const current = siblings.some((f) => {
+      try { return JSON.parse(f.state_json)?._v === version; } catch { return false; }
+    });
+    if (current) return false;
+    for (const [table, prefix] of [['events', 'codex:file:'], ['tool_calls', 'codex:tc:file:']]) {
+      this.db.prepare(`DELETE FROM ${table} WHERE tool = 'codex' AND dedup_key >= ? AND dedup_key < ?`)
+        .run(`${prefix}${stem}:`, `${prefix}${stem};`);
+    }
+    return true;
+  }
+
   /** 积分账本（Qoder 等源）：幂等入账，返回是否为新行 */
   insertCredit(e) {
     return this._insertCredit.run(e.ts, e.tool, e.amount, e.dedup_key).changes === 1;
