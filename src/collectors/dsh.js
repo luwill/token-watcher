@@ -24,7 +24,7 @@ const ZSTD_BINS = ['zstd', '/opt/homebrew/bin/zstd', '/usr/local/bin/zstd', '/us
  *   total = input + cacheRead + cacheWrite + output（v3 自带 totalTokens，实测恒等）。
  * - 模型优先取记录自带的 data.message.source.model（v3 起每条都带），
  *   回落到顺序解析 request/header 维护的当前模型；cwd 来自 session 记录。
- * - 同一请求的 chunk、message 与新旧文件副本共用 session + turn + step 去重键。
+ * - 同一请求的 chunk、message 与新旧文件副本共用去重键：session + turn + step + 输入侧用量。
  * - 解压优先用外部 zstd（支持追加的多帧），仅单帧时可回落到 Node 内置实现。
  */
 /** zstd 帧魔数。dsh 按批追加独立帧，单个会话文件实测有数千帧 */
@@ -88,7 +88,11 @@ export async function collectDshFile(store, { path, fileId }) {
     const { turn, step } = rec.data;
     const identified = Number.isSafeInteger(turn) && turn >= 0 && Number.isSafeInteger(step) && step >= 0;
     // 无请求身份的旧格式保持原键，不能把 undefined/undefined 的所有请求合成一条。
-    const dedupKey = identified ? `dsh:request:${fileId}:${turn}:${step}` : legacyKey;
+    // 键里带上输入侧用量：同一请求的各份副本输入必然相同（流式只会让输出增长），
+    // 输入不同就是两次请求（如失败后重试）。判不准时宁可各算一次，不静默合并。
+    const dedupKey = identified
+      ? `dsh:request:${fileId}:${turn}:${step}:${input}:${cached}:${cacheWrite}`
+      : legacyKey;
     const event = {
       ts: rec.time,
       tool: 'dsh',
@@ -105,7 +109,8 @@ export async function collectDshFile(store, { path, fileId }) {
     };
     const prev = requests.get(dedupKey);
     const legacyKeys = prev?.legacyKeys ?? new Set();
-    if (identified) legacyKeys.add(legacyKey);
+    // 第二个是 PR #1 合并前的请求键（不含输入用量），只有跑过那个分支的库里才有
+    if (identified) legacyKeys.add(legacyKey).add(`dsh:request:${fileId}:${turn}:${step}`);
     // 与 Store 的流式补齐规则一致：保留更完整的输出。用量相同时优先完整消息，
     // 因为它还携带逐请求模型；保留所有旧键，迁移时才能同时清掉 chunk/message。
     if (!prev || output > prev.event.output_tokens ||

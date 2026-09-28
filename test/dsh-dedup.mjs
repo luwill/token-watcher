@@ -129,6 +129,32 @@ export async function testDshDedup(ok) {
       });
     }
 
+    for (const reverse of [false, true]) {
+      await check(`同一 turn/step 但输入用量不同的是两次请求（如失败后重试）：${reverse ? '倒序' : '正序'}扫描都各算一次`, async () => {
+        const store = makeStore();
+        const retry = { ...usage, inputTokens: 300, totalTokens: 1300 };
+        // 两份快照里的 seq 与先后顺序都不同：去重键只能取决于记录自身
+        const paths = [fixture(oldName, [chunk(), message(), message(12, 1, 1, retry)]),
+          fixture(v3Name, [message(5, 1, 1, retry), message(6)])];
+        if (reverse) paths.reverse();
+        for (const path of paths) await scan(store, path);
+        assert.deepEqual(rows(store).map(e => e.total_tokens).sort(), [1100, 1300]);
+        for (const path of paths) assert.equal((await scan(store, path)).inserted, 0);
+        assert.equal(total(store), 2400);
+      });
+    }
+
+    await check('PR #1 分支存下的请求键（不含输入用量）升级后被替换，不重复计数', async () => {
+      const store = makeStore();
+      store.insertEvent({ ts: T + 1, tool: 'dsh', session_id: 'session-a', model: 'dsh-final-model',
+        input_tokens: 100, cached_input: 850, cache_write: 50, output_tokens: 100, total_tokens: 1100,
+        dedup_key: 'dsh:request:session-a:1:1' });
+      store.insertEvent({ ts: T, tool: 'dsh', session_id: 'session-a', input_tokens: 1, total_tokens: 1,
+        dedup_key: 'dsh:request:session-a:1:10' }); // 键只是前缀相同
+      await scan(store, fixture(v3Name, [message()]));
+      assert.deepEqual(rows(store).map(e => e.total_tokens).sort((a, b) => a - b), [1, 1100]);
+    });
+
     await check('先读流式用量、后读完整消息时补齐；旧副本不回退用量', async () => {
       const store = makeStore();
       const partial = fixture(oldName, [chunk(10, 1, 1, { ...usage, outputTokens: 0 })]);
