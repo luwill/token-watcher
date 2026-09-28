@@ -547,7 +547,7 @@ let ATY_GOLD = 0, ATY_FINAL = 0, ATY_U3_ESTIN = 0; // antigravity 黄金数字�
         message: { role: 'assistant', source: { kind: 'model', model: 'Dsh-Test-Model' } },
       },
     })));
-  // 旧格式：与 v3 同目录也并存过，父目录名作 fileId 会让两者 dedup_key 撞车
+  // 旧格式：chunk 与 message 共用请求身份，新旧快照重叠的回归见 dsh-dedup.mjs
   if (hasDsh) zstd(join(HOME, '.dsh/sessions/--work-projJ--/s-dsh-old'), 'session.jsonl.zstd',
     dshLines('projJ', JSON.stringify({
       type: 'assistant/chunk', seq: 3, time: NOW - 20500,
@@ -1203,7 +1203,7 @@ console.log('\n[7] 无 zstd CLI 时仍能解 dsh');
     console.log('  – 跳过（无 dsh fixture 或该 Node 无内置 zstd，只能靠外部 CLI）');
   } else {
     const { collectDshFile } = await import(pathToFileURL(join(ROOT, 'src/collectors/dsh.js')).href);
-    const mkStub = () => { const ev = []; return { ev, store: { insertEvent: (e) => { ev.push(e); return 1; }, insertToolCall: () => 1 } }; };
+    const mkStub = () => { const ev = []; return { ev, store: { insertDshEvent: (e) => { ev.push(e); return 1; }, insertToolCall: () => 1 } }; };
 
     // 单帧文件：内置 zstd 单帧能力足够，任何平台（含无 zstd 的 Windows 镜像）都必须解出。
     // 压缩负载里碰巧出现的帧魔数不得误判成多帧（Windows CI 真实发生过）。
@@ -1901,6 +1901,7 @@ await (await import('./leaderboard-worker.mjs')).testLeaderboardWorker(ok);
 await (await import('./leaderboard-ui.mjs')).testLeaderboardUi(ok);
 await (await import('./release-blockers.mjs')).testReleaseBlockers(ok);
 await (await import('./codex-replay.mjs')).testCodexReplay(ok);
+await (await import('./dsh-dedup.mjs')).testDshDedup(ok);
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
