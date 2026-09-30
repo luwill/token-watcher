@@ -13,9 +13,27 @@ CREATE TABLE IF NOT EXISTS players (
   models_json TEXT,                        -- [[模型, 占比%], ...] ≤8 条
   models_by_period_json TEXT,              -- {day, week, month}: 各周期主力模型与占比
   tools_json TEXT,                         -- [[工具, 占比%], ...] ≤8 条
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  write_nonce TEXT                         -- 每次成功写入的随机标记：同一事务的后续语句据此确认本次未被节流
 );
 CREATE INDEX IF NOT EXISTS idx_players_day_tokens ON players(day_tokens);
 CREATE INDEX IF NOT EXISTS idx_players_week_tokens ON players(week_tokens);
 CREATE INDEX IF NOT EXISTS idx_players_updated ON players(updated_at);
 CREATE INDEX IF NOT EXISTS idx_players_month_tokens ON players(month_tokens);
+
+-- 按天记录：7 天 / 30 天榜由服务端累加，不采用客户端自报的滚动总量（防伪造，见 migrations/0003）
+CREATE TABLE IF NOT EXISTS daily (
+  id TEXT NOT NULL,
+  day TEXT NOT NULL,                       -- UTC 自然日 YYYY-MM-DD
+  tokens INTEGER NOT NULL DEFAULT 0,       -- 当天最后一次上报的值（可因客户端重算而下降）
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_day ON daily(day);
+
+-- 封禁：被封 ID 的上报一律拒收（只删 players 行，下一小时就会被插回）
+CREATE TABLE IF NOT EXISTS banned (
+  id TEXT PRIMARY KEY,
+  reason TEXT,
+  banned_at INTEGER NOT NULL
+);

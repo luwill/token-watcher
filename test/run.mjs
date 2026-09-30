@@ -1898,6 +1898,7 @@ console.log('\n[LB] 社区排行榜');
 }
 
 await (await import('./leaderboard-worker.mjs')).testLeaderboardWorker(ok);
+await (await import('./leaderboard-antiforgery.mjs')).testLeaderboardAntiForgery(ok);
 await (await import('./leaderboard-ui.mjs')).testLeaderboardUi(ok);
 await (await import('./release-blockers.mjs')).testReleaseBlockers(ok);
 await (await import('./codex-replay.mjs')).testCodexReplay(ok);

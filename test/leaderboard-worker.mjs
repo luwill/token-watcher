@@ -31,7 +31,13 @@ export async function testLeaderboardWorker(ok) {
         async run() { return { meta: { changes: Number(stmt.run(...args).changes) } }; },
         async first() { return stmt.get(...args) ?? null; },
         async all() { return { results: stmt.all(...args) }; },
+        _run() { return { meta: { changes: Number(stmt.run(...args).changes) } }; },
       };
+    },
+    async batch(stmts) { // D1 batch 在一个事务里顺序执行
+      db.exec('BEGIN');
+      try { const out = stmts.map(s => s._run()); db.exec('COMMIT'); return out; }
+      catch (err) { db.exec('ROLLBACK'); throw err; }
     } },
     RATE_LIMITER: { async limit() { return { success: true }; } },
   };
@@ -78,9 +84,10 @@ export async function testLeaderboardWorker(ok) {
       models_by_period: { day: [['claude-opus-5-5', 90]], week: [['claude-opus-5', 70]], month: [['month-model', 60]] } });
     await post(monthly);
     const monthBoard = await board('month', monthly.id);
-    ok('月榜按独立 30 日总量排序，旧客户端不进入', monthBoard.period === 'month' &&
-      monthBoard.players === 1 && monthBoard.me_rank === 1 && monthBoard.me.month_tokens === 987654);
-    ok('旧客户端的日周榜保留且月用量为未知', (await board('week', initial.id)).me.month_tokens === null);
+    // 防伪造后 30 日总量由服务端按天累计，客户端报的 987654 不被采用（见 leaderboard-antiforgery.mjs）
+    ok('月榜按服务端累计排序，不采用客户端报的 30 日总量', monthBoard.period === 'month' &&
+      monthBoard.me_rank !== null && monthBoard.me.month_tokens === 1);
+    ok('旧客户端的 30 日用量同样由服务端累计', (await board('week', initial.id)).me.month_tokens === 100);
     for (const [period, model, share] of [['day', 'claude-opus-5-5', 90], ['week', 'claude-opus-5', 70], ['month', 'month-model', 60]]) {
       const me = (await board(period, monthly.id)).me;
       ok(period + ' 返回自己的周期模型和占比', me.models_period === period && me.models.length === 1 && me.models[0][0] === model && me.models[0][1] === share);
@@ -88,12 +95,12 @@ export async function testLeaderboardWorker(ok) {
     ok('旧记录日榜不拿周主力代替', (await board('day', initial.id)).me.models.length === 0 && (await board('day', initial.id)).me.models_period === null);
     ok('旧记录周榜仍可显示周主力', (await board('week', initial.id)).me.models[0][0] === 'test-model');
     db.prepare('UPDATE players SET day = ? WHERE id = ?').run('2026-09-23', monthly.id);
-    ok('跨午夜的 30 日快照仍可显示', (await board('month', monthly.id)).me_rank === 1);
+    ok('跨午夜的 30 日快照仍可显示', (await board('month', monthly.id)).me_rank !== null);
     db.prepare('UPDATE players SET updated_at = ? WHERE id = ?').run(now - 25 * 3600000, monthly.id);
     ok('超过 24h 的月快照退出榜单', (await board('month', monthly.id)).me_rank === null);
     db.prepare('UPDATE players SET updated_at = ? WHERE id = ?').run(now - 61000, monthly.id);
     await post({ ...monthly, month_tokens: undefined, models_by_period: undefined });
-    ok('回退旧客户端后清空过期月快照', (await board('month', monthly.id)).me_rank === null);
+    ok('回退旧客户端后 30 日仍按服务端累计显示', (await board('month', monthly.id)).me?.month_tokens === 1);
 
     ok('旧客户端覆盖时不残留旧周期模型', (await board('day', monthly.id)).me.models_period === null);
 

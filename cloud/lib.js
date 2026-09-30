@@ -52,3 +52,40 @@ export function clampReport(r) {
     tools: shares(r?.tools),
   };
 }
+
+/**
+ * 合理性上限。依据 2026-09 的真实重度用户（单日 11.2 亿 token / 6355 次请求 / 单小时 3.5 亿，
+ * 按天平均每次请求最多 66.8 万）各放宽 7~30 倍：宁可放过夸张的真数据，也不误伤真人。
+ */
+export const PLAUSIBLE = {
+  DAY_TOKENS: 2e10,          // 200 亿 / 天
+  HOUR_TOKENS: 5e9,          // 从 UTC 零点起每小时最多新增 50 亿
+  DAY_REQUESTS: 2e5,
+  TOKENS_PER_REQUEST: 5e6,   // 当日平均每次请求
+};
+
+/**
+ * 服务端合理性检查，针对原始上报（截断之前）：超限、自相矛盾、增长快于可能，一律拒收。
+ * 不截断到上限——截断会把造假者恰好送上第一名。返回拒收原因，合理返回 null。
+ * 这不能证明数据是真的（数据来自用户本机，代码开源），只能挡住离谱与自相矛盾的上报。
+ */
+export function implausibleReason(body, now = Date.now()) {
+  const num = (v, required = true) => {
+    if (v == null) return required ? NaN : null;
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : NaN;
+  };
+  const day = num(body?.day_tokens), req = num(body?.day_requests);
+  const week = num(body?.week_tokens), month = num(body?.month_tokens, false); // 旧客户端无 30 日字段
+  if ([day, req, week, month].some(Number.isNaN)) return 'usage must be non-negative numbers';
+  if (day > PLAUSIBLE.DAY_TOKENS) return 'day_tokens implausible';
+  const d = new Date(now);
+  const hoursToday = (now - Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) / 3600_000;
+  if (day > PLAUSIBLE.HOUR_TOKENS * (hoursToday + 1)) return 'day_tokens grew too fast';
+  if (req > PLAUSIBLE.DAY_REQUESTS) return 'day_requests implausible';
+  if (day > 0 && req < 1) return 'usage without requests';
+  if (req > 0 && day / req > PLAUSIBLE.TOKENS_PER_REQUEST) return 'tokens per request implausible';
+  // 客户端同一时刻算三个窗口：UTC 今天 ⊆ 滚动 7 天 ⊆ 滚动 30 天
+  if (week < day || (month != null && month < week)) return 'windows inconsistent';
+  if (week > 7 * PLAUSIBLE.DAY_TOKENS || (month != null && month > 30 * PLAUSIBLE.DAY_TOKENS)) return 'window totals implausible';
+  return null;
+}

@@ -171,9 +171,13 @@ without your random UUID when participation is disabled. `doctor` shows
 the participation state either way. The reference backend is a
 Cloudflare Worker + D1 (free tier) in [`cloud/`](cloud/README.md) — anyone can
 self-host one and point the CLI at it. Server-side defenses: name sanitizing,
-all-field clamping, 16 KiB request limits, edge rate limiting, 60s per-ID throttling,
+16 KiB request limits, edge rate limiting, 60s per-ID throttling,
 and daily cleanup of entries inactive for over 30 days (normally removed within 31 days).
-The daily board uses UTC; the rolling-7-day and rolling-30-day boards require a report within 24 hours. Older clients without a 30-day total remain on the day/week boards until upgraded.
+Against forged numbers: implausible or self-contradicting reports are rejected rather than
+clamped, the 7-day and 30-day boards are summed server-side from the days the server
+actually received (client-reported rolling totals are never ranked), and banned IDs are refused.
+See [cloud/README.md](cloud/README.md#防伪造).
+The daily board uses UTC; the 7-day and 30-day boards cover the last 7 / 30 UTC days and require a report within 24 hours.
 
 The dominant model follows the selected period: UTC today, rolling 7 days, or
 rolling 30 days. It is the model with the largest `total_tokens` sum in that window;
@@ -183,7 +187,7 @@ denominator but cannot be a dominant model. Model versions remain distinct.
 Older reports containing only weekly models show a pending-update message on the
 daily/30-day boards instead of reusing weekly data. Tool shares remain weekly.
 ROI is a local-calendar-month hypothetical API-equivalent/monthly-fee ratio.
-All figures are **self-reported and unverified**; this is not a competition or audited usage record.
+All figures are **self-reported and cannot be proven genuine** (they come from each user's own machine and the code is open source); this is not a competition or audited usage record.
 The application database does not store IP addresses; Cloudflare processes network
 metadata and uses source IPs for edge rate limiting.
 

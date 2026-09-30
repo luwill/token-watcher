@@ -7,10 +7,13 @@
  *   GET  /leaderboard?period=day|week|month&metric=tokens|roi
  *   可选 X-Leaderboard-ID 请求头用于返回自己的排名，不把 ID 放入 URL。
  *
- * 防滥用从简（榜单只是虚荣数字）：昵称清洗 + 全字段封顶 + 60s 节流 +
- * 每日清除 30 天不活跃记录。不做账号体系，应用数据库不存 IP。
+ * 防滥用：昵称清洗 + 60s 节流 + 每日清除 30 天不活跃记录。不做账号体系，应用数据库不存 IP。
+ * 防伪造（数据来自用户本机、代码开源，无法证明真伪，只能让造假变难、变显眼、可处理）：
+ *   - 不合理的上报直接拒收，不截断到上限（lib.js implausibleReason）
+ *   - 7 / 30 天由服务端按天累加（daily 表），不采用客户端自报的滚动总量
+ *   - 封禁表：被封 ID 上报一律 403；封禁经 admin.mjs 走 wrangler，不开公网管理接口
  */
-import { sanitizeName, clampReport } from './lib.js';
+import { sanitizeName, clampReport, implausibleReason } from './lib.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -60,8 +63,16 @@ export default {
   },
   async scheduled(_event, env) {
     await env.DB.prepare('DELETE FROM players WHERE updated_at < ?').bind(Date.now() - RETAIN_MS).run();
+    // 按天记录只需覆盖 30 天窗口；玩家行已删的残留一并清掉
+    await env.DB.prepare('DELETE FROM daily WHERE day < ? OR id NOT IN (SELECT id FROM players)')
+      .bind(utcDayOffset(Date.now(), -30)).run();
   },
 };
+
+/** UTC 自然日偏移后的 YYYY-MM-DD（offset=-6 即含今天在内的 7 天窗口起点） */
+function utcDayOffset(now, offset) {
+  return new Date(now + offset * 86400_000).toISOString().slice(0, 10);
+}
 
 function tooMany() {
   return new Response(JSON.stringify({ error: 'rate limited' }), {
@@ -93,27 +104,49 @@ async function handleReport(request, env) {
   try { body = JSON.parse(raw); } catch { return json400('bad json'); }
   if (body?.v !== 1) return json400('bad version');
   if (typeof body?.id !== 'string' || !UUID.test(body.id)) return json400('bad id');
-  const r = clampReport(body);
+  if (await env.DB.prepare('SELECT 1 FROM banned WHERE id = ?').bind(body.id).first()) {
+    return new Response(JSON.stringify({ error: 'banned' }), { status: 403, headers: JSON_HEADERS });
+  }
   const now = Date.now();
+  const implausible = implausibleReason(body, now); // 查原始值：截断之后就看不出造假了
+  if (implausible) return json400(implausible);
+  const r = clampReport(body);
   if (r.day !== new Date(now).toISOString().slice(0, 10)) return json400('day must be current UTC date');
   const name = sanitizeName(body?.name) ?? `匿名-${r.id.slice(0, 4)}`;
 
-  // 原子 upsert：被节流不能声称新数据已被接受。
-  const result = await env.DB.prepare(`
-    INSERT INTO players (id, name, day, day_tokens, day_requests, week_tokens, month_tokens, roi_ratio, models_json, models_by_period_json, tools_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  // 一个事务里三步：写玩家行（带节流条件）→ 写当天记录 → 按天重算 7 / 30 天。
+  // 后两步以"玩家行带着本次的随机写入标记"为条件：被节流时第一步不生效，后两步随之跳过。
+  // 不能用时间戳当条件——同一毫秒内的重放会被误认成本次写入。
+  // 7 / 30 天只认服务端见过的天，不采用客户端报的滚动总量——那是最容易伪造的数字。
+  const weekStart = utcDayOffset(now, -6), monthStart = utcDayOffset(now, -29);
+  const nonce = crypto.randomUUID();
+  const [result] = await env.DB.batch([
+    env.DB.prepare(`
+    INSERT INTO players (id, name, day, day_tokens, day_requests, week_tokens, month_tokens, roi_ratio, models_json, models_by_period_json, tools_json, updated_at, write_nonce)
+    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name, day = excluded.day, day_tokens = excluded.day_tokens,
-      day_requests = excluded.day_requests, week_tokens = excluded.week_tokens,
-      month_tokens = excluded.month_tokens,
+      day_requests = excluded.day_requests,
       roi_ratio = excluded.roi_ratio, models_json = excluded.models_json,
       models_by_period_json = excluded.models_by_period_json,
-      tools_json = excluded.tools_json, updated_at = excluded.updated_at
+      tools_json = excluded.tools_json, updated_at = excluded.updated_at,
+      write_nonce = excluded.write_nonce
     WHERE players.updated_at + ${THROTTLE_MS} <= excluded.updated_at`)
-    .bind(r.id, name, r.day, r.day_tokens, r.day_requests, r.week_tokens, r.month_tokens, r.roi_ratio,
-      JSON.stringify(r.models), r.models_by_period ? JSON.stringify(r.models_by_period) : null,
-      JSON.stringify(r.tools), now)
-    .run();
+      .bind(r.id, name, r.day, r.day_tokens, r.day_requests, r.roi_ratio,
+        JSON.stringify(r.models), r.models_by_period ? JSON.stringify(r.models_by_period) : null,
+        JSON.stringify(r.tools), now, nonce),
+    env.DB.prepare(`
+    INSERT INTO daily (id, day, tokens, updated_at)
+    SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM players WHERE id = ? AND write_nonce = ?)
+    ON CONFLICT(id, day) DO UPDATE SET tokens = excluded.tokens, updated_at = excluded.updated_at`)
+      .bind(r.id, r.day, r.day_tokens, now, r.id, nonce),
+    env.DB.prepare(`
+    UPDATE players SET
+      week_tokens = (SELECT COALESCE(SUM(tokens), 0) FROM daily WHERE daily.id = players.id AND day >= ?),
+      month_tokens = (SELECT COALESCE(SUM(tokens), 0) FROM daily WHERE daily.id = players.id AND day >= ?)
+    WHERE id = ? AND write_nonce = ?`)
+      .bind(weekStart, monthStart, r.id, nonce),
+  ]);
 
   if (!result.meta.changes) return tooMany();
   return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS });
