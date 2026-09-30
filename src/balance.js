@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { netFetch } from './netGate.js';
 import { join } from 'node:path';
 import { HOME, isOffline } from './config.js';
 
@@ -45,7 +46,7 @@ async function loadEnvFile(path) {
   return map;
 }
 
-async function fetchJson(url, key, timeoutMs = 10_000, fetchImpl = fetch) {
+async function fetchJson(url, key, timeoutMs = 10_000, fetchImpl = netFetch) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {

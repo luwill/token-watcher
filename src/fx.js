@@ -1,4 +1,5 @@
 import { readFile, writeFile, stat } from 'node:fs/promises';
+import { netFetch } from './netGate.js';
 import { join } from 'node:path';
 import { DATA_DIR, isOffline } from './config.js';
 
@@ -37,7 +38,7 @@ async function fetchOnce(url, timeoutMs = 10_000) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: ac.signal });
+    const res = await netFetch(url, { signal: ac.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const j = await res.json();
     // er-api: { rates: { CNY } }；currency-api: { usd: { cny } }

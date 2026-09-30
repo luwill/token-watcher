@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { netFetch } from './netGate.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HOME, isOffline } from './config.js';
@@ -89,7 +90,7 @@ export function normalizeUsage(body) {
   };
 }
 
-export async function fetchClaudeUsage(token, { fetchImpl = fetch } = {}) {
+export async function fetchClaudeUsage(token, { fetchImpl = netFetch } = {}) {
   const res = await fetchImpl(USAGE_URL, {
     headers: {
       Authorization: `Bearer ${token}`,

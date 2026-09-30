@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HOME, isOffline } from './config.js';
 import { normalizeModel } from './models.js';
+import { netFetch } from './netGate.js';
 
 /**
  * Cursor 官方用量账单轮询。
@@ -135,7 +136,7 @@ export class CursorUsagePoller {
     const cookie = this.cookieImpl();
     if (!cookie) { this._lastError = null; return; } // 未装/未登录：静默跳过
     try {
-      const res = await (this.fetchImpl ?? fetch)(CSV_URL, {
+      const res = await (this.fetchImpl ?? netFetch)(CSV_URL, {
         headers: {
           Cookie: cookie,
           Referer: 'https://www.cursor.com/settings',

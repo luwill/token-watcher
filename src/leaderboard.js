@@ -1,4 +1,5 @@
 import { isOffline } from './config.js';
+import { netFetch } from './netGate.js';
 import { computeRoi } from './roi.js';
 
 /**
@@ -182,7 +183,7 @@ export async function buildLeaderboardReport(store, { now = Date.now(), roiFn = 
 }
 
 /** 上报一次（未开启/离线直接跳过；失败记录 last_error 供面板与 doctor 展示，不抛出） */
-export async function pushLeaderboardReport(store, { log = () => {}, fetchImpl = fetch, now = Date.now(), timeoutMs = 10_000, roiFn } = {}) {
+export async function pushLeaderboardReport(store, { log = () => {}, fetchImpl = netFetch, now = Date.now(), timeoutMs = 10_000, roiFn } = {}) {
   const st = getLeaderboardState(store);
   if (!st.enabled) return { skipped: 'disabled' };
   if (!st.name) return { skipped: 'no-name' };
@@ -220,7 +221,7 @@ export async function pushLeaderboardReport(store, { log = () => {}, fetchImpl =
 }
 
 /** 拉取榜单（GET，含我方排名——id 只在已参与时才随查询发出） */
-export async function fetchLeaderboard({ url, id = null, period = 'day', metric = 'tokens', fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+export async function fetchLeaderboard({ url, id = null, period = 'day', metric = 'tokens', fetchImpl = netFetch, timeoutMs = 10_000 } = {}) {
   const base = String(url ?? LEADERBOARD_URL_DEFAULT).replace(/\/+$/, '');
   const q = new URLSearchParams({
     period: ['week', 'month'].includes(period) ? period : 'day',
@@ -240,7 +241,7 @@ export async function fetchLeaderboard({ url, id = null, period = 'day', metric 
 }
 
 /** 常驻服务里的周期上报：每小时一次，启动 90 秒后先来一轮（首轮扫描刚好完成） */
-export function scheduleLeaderboardUpload(store, { log = () => {}, intervalMs = 3600_000, fetchImpl = fetch } = {}) {
+export function scheduleLeaderboardUpload(store, { log = () => {}, intervalMs = 3600_000, fetchImpl = netFetch } = {}) {
   const tick = () => pushLeaderboardReport(store, { log, fetchImpl }).catch(() => {});
   setTimeout(tick, 90_000).unref?.();
   setInterval(tick, intervalMs).unref?.();

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { netFetch } from './netGate.js';
 import { join } from 'node:path';
 import { HOME, isOffline } from './config.js';
 
@@ -91,7 +92,7 @@ export function normalizeZcodeQuota(body) {
   };
 }
 
-export async function fetchZcodeQuota(target, { fetchImpl = fetch } = {}) {
+export async function fetchZcodeQuota(target, { fetchImpl = netFetch } = {}) {
   const res = await fetchImpl(target.origin + QUOTA_PATH, {
     headers: { authorization: target.apiKey, Accept: 'application/json' },
   });

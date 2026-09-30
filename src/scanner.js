@@ -79,6 +79,7 @@ export class Scanner extends EventEmitter {
     this.store = store;
     this.log = log;
     this.scanning = false;
+    this.progress = 0; // 每处理一个文件 +1，卡死自检据此区分"慢"与"不动"
     this.stats = {}; // tool -> { files, parse_errors, last_error, last_scan_ms }
     this._watchers = [];
     this._debounceTimer = null;
@@ -111,6 +112,7 @@ export class Scanner extends EventEmitter {
         if (!s) continue;
         files++;
         st.files++;
+        this.progress++;
         seen.add(path);
         const fileId = sessionKey || basename(path, '.jsonl');
         const row = this.store.getFile(path);

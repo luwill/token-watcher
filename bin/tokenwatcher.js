@@ -20,6 +20,7 @@
  *
  * tokenmeter 为旧命令名，仍作为别名保留（1.2 及更早版本装的是这个名字）。
  */
+import '../src/threadpool.js'; // 必须最先执行
 import { existsSync, renameSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -29,6 +30,7 @@ import { Scanner } from '../src/scanner.js';
 import { startServer } from '../src/server.js';
 import { BalancePoller } from '../src/balance.js';
 import { DB_PATH } from '../src/config.js';
+import { startStallWatchdog } from '../src/watchdog.js';
 
 const VERSION = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version;
 
@@ -263,6 +265,15 @@ if (cmd === 'scan') {
     log(`${r.tool.padEnd(12)} ${String(r.n).padStart(6)} 次  total=${fmt(r.total)}`);
   }
   scanner.startWatching();
+  // 卡死时必须强杀：线程池里有线程卡着，process.exit() 会等它们结束，永远退不出去（实测）。
+  // 由 launchd 托管时会被自动拉起；其他运行方式至少留下这条原因，而不是悄悄停工。
+  startStallWatchdog({
+    scanner,
+    onStall: (why) => {
+      console.error(`[token-watcher] 服务已卡死：${why}。常见于睡眠唤醒后网络未恢复。进程即将结束，请重新启动（launchd 托管会自动重启）。`);
+      process.kill(process.pid, 'SIGKILL');
+    },
+  }, { tickMs: Number(process.env.TOKENMETER_STALL_TICK_MS) || undefined });
   const balancePoller = new BalancePoller(store, { log });
 
   // 未显式指定端口时，被占或不可绑定（Windows 的 Hyper-V/WinNAT 保留段会成段出现）则

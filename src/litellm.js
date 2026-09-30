@@ -1,4 +1,5 @@
 import { readFile, writeFile, stat } from 'node:fs/promises';
+import { netFetch } from './netGate.js';
 import { join } from 'node:path';
 import { DATA_DIR, isOffline } from './config.js';
 
@@ -57,7 +58,7 @@ export async function ensurePrices({ force = false } = {}) {
         const ac = new AbortController();
         const t = setTimeout(() => ac.abort(), 30_000);
         try {
-          const res = await fetch(PRICES_URL, { signal: ac.signal });
+          const res = await netFetch(PRICES_URL, { signal: ac.signal });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const text = await res.text();
           await writeFile(CACHE_PATH, text).catch(() => {});
