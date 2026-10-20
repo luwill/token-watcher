@@ -102,6 +102,8 @@ export class Scanner extends EventEmitter {
     this._debounceTimer = null;
     this._intervalTimer = null;
     this._codexBackfilled = false; // 本实例是否已做过一次全量 Codex 模型补全
+    this._rescan = false;  // 扫描进行中又有扫描请求：本轮结束后补一轮
+    this._stopped = false;
   }
 
   _stat(tool) {
@@ -111,7 +113,11 @@ export class Scanner extends EventEmitter {
 
   /** 全量增量扫描：游标未变的文件直接跳过。 */
   async scanAll({ quiet = false } = {}) {
-    if (this.scanning) return { skippedConcurrent: true };
+    if (this.scanning) {
+      // 本轮可能已经走过了刚变化的文件：直接丢掉的话，这次改动要等 60s 兜底扫描才入库
+      this._rescan = true;
+      return { skippedConcurrent: true };
+    }
     this.scanning = true;
     const t0 = Date.now();
     let files = 0, inserted = 0, changed = false, codexTouched = false;
@@ -190,6 +196,10 @@ export class Scanner extends EventEmitter {
     } finally {
       // 必须无条件复位：留在 true 会让之后每一轮扫描都被"并发中"挡掉，面板从此停更
       this.scanning = false;
+      if (this._rescan) {
+        this._rescan = false;
+        this._scheduleScan(); // 走防抖：持续写入时不会变成背靠背的连续扫描
+      }
     }
     // 模型只会在 Codex 文件被重新解析后变得可知（自身记录或父会话）；没有 Codex 文件变化的轮次
     // 无事可补。每个实例首轮仍全量跑一次，兜住旧库与上次中断留下的空模型。
@@ -278,6 +288,7 @@ export class Scanner extends EventEmitter {
 
   /** FSEvents 监听 + 防抖 + 周期兜底扫描 */
   startWatching() {
+    this._stopped = false;
     for (const src of SOURCES) {
       for (const root of src.roots) {
         // sqlite 源：WAL 写入不改变主文件，必须监听父目录才能收到 -wal 变更事件
@@ -302,7 +313,7 @@ export class Scanner extends EventEmitter {
   }
 
   _scheduleScan() {
-    if (this._debounceTimer) return;
+    if (this._stopped || this._debounceTimer) return;
     this._debounceTimer = setTimeout(() => {
       this._debounceTimer = null;
       // 定时器回调里的 rejection 无人接手 = 未处理 rejection = 进程退出，必须就地收敛
@@ -312,6 +323,7 @@ export class Scanner extends EventEmitter {
   }
 
   stop() {
+    this._stopped = true;
     for (const w of this._watchers) w.close();
     if (this._intervalTimer) clearInterval(this._intervalTimer);
     if (this._debounceTimer) clearTimeout(this._debounceTimer);

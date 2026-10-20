@@ -2059,6 +2059,7 @@ await (await import('./opencode-memory.mjs')).testOpencodeMemory(ok);
 await (await import('./scan-complexity.mjs')).testScanComplexity(ok);
 await (await import('./history-cache.mjs')).testHistoryCache(ok);
 await (await import('./idle-scan.mjs')).testIdleScan(ok);
+await (await import('./scan-rerun.mjs')).testScanRerun(ok);
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
