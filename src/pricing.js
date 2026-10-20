@@ -4,6 +4,7 @@ import { DATA_DIR, SOURCES } from './config.js';
 import { ensurePrices, lookupPrice } from './litellm.js';
 import { ensureFxRate } from './fx.js';
 import { localDayStart, localRangeStart } from './timeRange.js';
+import { cachedHistory } from './historyCache.js';
 import { officialPrice, pricingModel, LONG_CONTEXT_SQL } from './officialPricing.js';
 
 /**
@@ -94,13 +95,41 @@ function priceOf(model, table, rate, now = Date.now(), tool, longContext = false
   return { inCny: p.input * rate, cacheCny: p.cacheRead * rate, outCny: p.output * rate, cacheWCny: p.cacheWrite * rate, offPeak };
 }
 
-/** 窗口费用聚合（供费用卡与订阅 ROI 共用：同一 priceOf 链路与峰谷判定） */
-export function aggregateCosts(db, since, { rate = 7.2, table = {}, now = Date.now() } = {}) {
-  const rows = db.prepare(`
+/** 计价前的分组行：[since, until) 内按 tool × model × 峰谷 × 长上下文求和 */
+function costRows(db, since, until = Number.MAX_SAFE_INTEGER) {
+  return db.prepare(`
     SELECT tool, model, ${PEAK_SQL} AS peak, ${LONG_CONTEXT_SQL} AS long_context,
            SUM(input_tokens) fi, SUM(cached_input) ci,
            SUM(cache_write) cw, SUM(output_tokens) oi
-    FROM events WHERE ts >= ? GROUP BY tool, model, peak, long_context`).all(since);
+    FROM events WHERE ts >= ? AND ts < ? GROUP BY tool, model, peak, long_context`).all(since, until);
+}
+
+/** 窗口费用聚合（供费用卡与订阅 ROI 共用：同一 priceOf 链路与峰谷判定） */
+export function aggregateCosts(db, since, opts = {}) {
+  return priceCostRows(costRows(db, since), opts);
+}
+
+/**
+ * 全时段费用：今天 0 点前的分组行走历史缓存，只现查今天的部分。
+ * 两段同组的行先合并再计价，结果与直接 aggregateCosts(db, 0) 逐项一致。
+ */
+function aggregateAllCosts(db, opts) {
+  const boundary = localDayStart(opts.now);
+  const merged = new Map();
+  for (const r of [...cachedHistory(db, 'costRows', boundary, (b) => costRows(db, 0, b)), ...costRows(db, boundary)]) {
+    const k = `${r.tool}\u0000${r.model}\u0000${r.peak}\u0000${r.long_context}`;
+    const m = merged.get(k);
+    if (!m) merged.set(k, { ...r });
+    else { m.fi += r.fi; m.ci += r.ci; m.cw += r.cw; m.oi += r.oi; }
+  }
+  // 按 GROUP BY 的键序排：同额并列的排序、unpriced 列表顺序都与单条查询一致
+  const cmp = (a, b) => (a === b ? 0 : a == null ? -1 : b == null ? 1 : a < b ? -1 : 1);
+  const rows = [...merged.values()].sort((a, b) => cmp(a.tool, b.tool) || cmp(a.model, b.model)
+    || cmp(a.peak, b.peak) || cmp(a.long_context, b.long_context));
+  return priceCostRows(rows, opts);
+}
+
+function priceCostRows(rows, { rate = 7.2, table = {}, now = Date.now() } = {}) {
   const byModel = new Map(), byTool = new Map(), byToolModel = new Map(), unpriced = new Set();
   const unpricedByToolModel = []; // ROI 要区分"没用量"和"有用量但无牌价"，后者不能折成 0 元
   let total = 0;
@@ -146,17 +175,23 @@ export async function computeCosts(db, days = 30, { now = Date.now() } = {}) {
   await Promise.race([ensurePrices().catch(() => {}), new Promise(r => setTimeout(r, 1500))]);
   const agg = (since) => aggregateCosts(db, since, { rate, table, now });
 
-  const all = agg(0);
+  const all = aggregateAllCosts(db, { rate, table, now });
   const today = agg(localDayStart(now));
   const last7 = agg(localRangeStart(7, now));
 
   // 按天 × 模型成本（供"按天花费"堆叠柱形图）
   const rangeStart = localRangeStart(days, now);
-  const dayRows = db.prepare(`
+  // 本地日是组键之一，今天 0 点是组边界：历史段走缓存，与今天段直接拼接
+  const dayCostRows = (since, until = Number.MAX_SAFE_INTEGER) => db.prepare(`
     SELECT date(ts/1000, 'unixepoch', 'localtime') d, tool, model, ${PEAK_SQL} AS peak,
            ${LONG_CONTEXT_SQL} AS long_context,
            SUM(input_tokens) fi, SUM(cached_input) ci, SUM(cache_write) cw, SUM(output_tokens) oi
-    FROM events WHERE ts >= ? GROUP BY d, tool, model, peak, long_context ORDER BY d`).all(rangeStart);
+    FROM events WHERE ts >= ? AND ts < ? GROUP BY d, tool, model, peak, long_context ORDER BY d`).all(since, until);
+  const boundary = localDayStart(now);
+  const dayRows = [
+    ...cachedHistory(db, `dayCost:${rangeStart}`, boundary, (b) => dayCostRows(rangeStart, b)),
+    ...dayCostRows(Math.max(rangeStart, boundary)),
+  ];
   const byDayMap = new Map();
   for (const r of dayRows) {
     const p = priceOf(r.model, table, rate, now, r.tool, !!r.long_context);

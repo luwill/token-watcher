@@ -15,6 +15,7 @@ import { ensurePrices, setOnChange as onPricesLoaded } from './litellm.js';
 import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
 import { scheduleLeaderboardUpload, getLeaderboardState, fetchLeaderboard } from './leaderboard.js';
 import { localDayStart, localRangeStart } from './timeRange.js';
+import { cachedHistory } from './historyCache.js';
 
 const DB_DIRPATH = dirname(DB_PATH);
 
@@ -102,9 +103,17 @@ export function computeHealth(db, scannerStats) {
   // 漏掉的源不会报错，只是从健康自检里静默消失——正是这类检查最不该有的失效方式。
   const tools = SOURCES.map(s => s.tool);
   const now = Date.now();
+  // 各源事件数要数全部历史：今天 0 点前的部分走历史缓存（historyCache.js），只现数今天
+  const countsSince = (since, until = Number.MAX_SAFE_INTEGER) => db.prepare(
+    'SELECT tool, COUNT(*) n, MAX(ts) last_ts FROM events WHERE ts >= ? AND ts < ? GROUP BY tool').all(since, until);
+  const evByTool = new Map();
+  const todayStart = localDayStart(now);
+  for (const r of [...cachedHistory(db, 'toolCounts', todayStart, (b) => countsSince(0, b)), ...countsSince(todayStart)]) {
+    const m = evByTool.get(r.tool);
+    if (m) { m.n += r.n; m.last_ts = Math.max(m.last_ts, r.last_ts); } else evByTool.set(r.tool, { ...r });
+  }
   return tools.map(tool => {
-    const ev = db.prepare(
-      'SELECT COUNT(*) n, MAX(ts) last_ts FROM events WHERE tool = ?').get(tool);
+    const ev = evByTool.get(tool) ?? { n: 0, last_ts: null };
     // 积分账本也算"有数据"（Qoder 等源本地只报积分不报 token——卡在积分卡上，健康不该误报"无数据"）
     const cr = db.prepare(
       'SELECT COUNT(*) n, MAX(ts) last_ts FROM credit_usage WHERE tool = ?').get(tool);
@@ -148,22 +157,34 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
   // 按自然日对齐：近 N 天 = 今天 0 点往前 N-1 天，避免 21 点查 7 天返回 8 个日桶
   const rangeStart = localRangeStart(days, now);
 
-  // 全表按本地日聚合只扫一遍：全量总数、峰值日、活跃日集合都从这一份推出。
-  // 面板每次推送都会重取 summary，这几条曾各自全表扫描一次。
-  const dayAll = db.prepare(`
+  // 全表按本地日聚合：全量总数、峰值日、活跃日集合都从这一份推出。
+  // 面板每次推送都会重取 summary：今天 0 点前的部分走历史缓存，只现查今天（historyCache.js）。
+  const dayRowsSince = (since, until = Number.MAX_SAFE_INTEGER) => db.prepare(`
     SELECT date(ts/1000, 'unixepoch', 'localtime') d, SUM(total_tokens) total, COUNT(*) n
-    FROM events GROUP BY d ORDER BY d`).all();
+    FROM events WHERE ts >= ? AND ts < ? GROUP BY d ORDER BY d`).all(since, until);
+  const dayMerged = new Map();
+  for (const r of [...cachedHistory(db, 'dayAll', todayStart, (b) => dayRowsSince(0, b)), ...dayRowsSince(todayStart)]) {
+    const m = dayMerged.get(r.d);
+    if (m) { m.total += r.total; m.n += r.n; } else dayMerged.set(r.d, { ...r });
+  }
+  const dayAll = [...dayMerged.values()].sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
   const allTime = dayAll.reduce((a, r) => ({ n: a.n + r.n, total: a.total + r.total }), { n: 0, total: 0 });
   const peak = { peak: dayAll.reduce((m, r) => Math.max(m, r.total), 0) };
   const dayAllRows = dayAll.map(r => ({ d: r.d, total: r.total }));
   const today = db.prepare('SELECT SUM(total_tokens) total FROM events WHERE ts >= ?').get(todayStart);
   const last7 = db.prepare('SELECT SUM(total_tokens) total FROM events WHERE ts >= ?').get(localRangeStart(7, now));
+  // `+session_id`：不加时 SQLite 为 DISTINCT 选 idx_events_session，把全部历史的会话索引扫一遍
   const todaySessions = db.prepare(
-    'SELECT COUNT(DISTINCT session_id) n FROM events WHERE ts >= ?').get(todayStart);
+    'SELECT COUNT(DISTINCT +session_id) n FROM events WHERE ts >= ?').get(todayStart);
 
-  const dayRows = db.prepare(`
+  // 按天分组以本地日为键，今天 0 点正好是组边界：历史段与今天段不会落在同一组，直接拼接
+  const dayToolRows = (since, until = Number.MAX_SAFE_INTEGER) => db.prepare(`
     SELECT date(ts/1000, 'unixepoch', 'localtime') d, tool, SUM(total_tokens) total
-    FROM events WHERE ts >= ? GROUP BY d, tool ORDER BY d`).all(rangeStart);
+    FROM events WHERE ts >= ? AND ts < ? GROUP BY d, tool ORDER BY d`).all(since, until);
+  const dayRows = [
+    ...cachedHistory(db, `dayTool:${rangeStart}`, todayStart, (b) => dayToolRows(rangeStart, b)),
+    ...dayToolRows(Math.max(rangeStart, todayStart)),
+  ];
   const modelRows = db.prepare(`
     SELECT model, SUM(total_tokens) total, COUNT(*) n FROM events
     WHERE ts >= ? GROUP BY model ORDER BY total DESC LIMIT 10`).all(rangeStart);

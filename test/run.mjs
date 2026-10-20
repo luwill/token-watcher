@@ -2057,6 +2057,7 @@ await (await import('./official-pricing.mjs')).testOfficialPricing(ok);
 await (await import('./maintenance-loop.mjs')).testMaintenanceLoop(ok);
 await (await import('./opencode-memory.mjs')).testOpencodeMemory(ok);
 await (await import('./scan-complexity.mjs')).testScanComplexity(ok);
+await (await import('./history-cache.mjs')).testHistoryCache(ok);
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });
