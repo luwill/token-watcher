@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_tool_ts ON events(tool, ts);
+-- 只收录缺模型的行（通常为空或极少）：Codex 模型回填每轮扫描对每个会话各 UPDATE 一次，
+-- 走 idx_events_session 要把该会话全部事件过一遍，百万行时每轮约 0.5 s；部分索引下只碰 NULL 行。
+CREATE INDEX IF NOT EXISTS idx_events_model_null ON events(session_id) WHERE model IS NULL;
 
 CREATE TABLE IF NOT EXISTS files (
   path TEXT PRIMARY KEY,

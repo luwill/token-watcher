@@ -101,6 +101,7 @@ export class Scanner extends EventEmitter {
     this._watchers = [];
     this._debounceTimer = null;
     this._intervalTimer = null;
+    this._codexBackfilled = false; // 本实例是否已做过一次全量 Codex 模型补全
   }
 
   _stat(tool) {
@@ -113,7 +114,7 @@ export class Scanner extends EventEmitter {
     if (this.scanning) return { skippedConcurrent: true };
     this.scanning = true;
     const t0 = Date.now();
-    let files = 0, inserted = 0, changed = false;
+    let files = 0, inserted = 0, changed = false, codexTouched = false;
 
     try {
     for (const src of SOURCES) {
@@ -159,6 +160,7 @@ export class Scanner extends EventEmitter {
         };
         // 先在事务外解析（含 await 读文件），写入只记下；事务里同步回放。
         // 事务若跨 await，同一连接上轮询器的写入会落进来、随解析失败一起被回滚。
+        if (src.collector === 'codex') codexTouched = true;
         const staged = this.store.stageWrites();
         let r;
         try {
@@ -189,7 +191,12 @@ export class Scanner extends EventEmitter {
       // 必须无条件复位：留在 true 会让之后每一轮扫描都被"并发中"挡掉，面板从此停更
       this.scanning = false;
     }
-    this._inheritCodexModels();
+    // 模型只会在 Codex 文件被重新解析后变得可知（自身记录或父会话）；没有 Codex 文件变化的轮次
+    // 无事可补。每个实例首轮仍全量跑一次，兜住旧库与上次中断留下的空模型。
+    if (codexTouched || !this._codexBackfilled) {
+      this._inheritCodexModels();
+      this._codexBackfilled = true;
+    }
     if (!quiet) {
       this.log(`scan: ${files} files, +${inserted} events in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
@@ -232,8 +239,10 @@ export class Scanner extends EventEmitter {
     // files.session_id 是完整 stem（rollout-时间-<uuid>），parent_thread_id 是裸 uuid → 按尾部 36 位匹配
     const uuidOf = (sid) => (sid || '').slice(-36);
     const byUuid = new Map(rows.map(r => [uuidOf(r.session_id), r]));
-    const updState = db.prepare(
-      "UPDATE events SET model = ? WHERE tool = 'codex' AND session_id = ? AND model IS NULL");
+    // 钉住部分索引（store.js）：只含缺模型的行。无统计信息时规划器可能改走 idx_events_session，
+    // 那样每个会话的全部事件每轮都要过一遍
+    const updState = db.prepare(`UPDATE events INDEXED BY idx_events_model_null SET model = ?
+      WHERE tool = 'codex' AND session_id = ? AND model IS NULL`);
     const states = new Map();
     for (const r of rows) {
       try { states.set(r.session_id, r.state_json ? JSON.parse(r.state_json) : null); } catch { states.set(r.session_id, null); }
