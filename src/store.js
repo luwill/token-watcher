@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS files (
   state_json TEXT,                        -- collector 跨次解析所需状态（codex 累计用量/当前模型等）
   last_scan_ms INTEGER NOT NULL DEFAULT 0
 );
+-- Codex 首扫按会话茎名找同名副本（dropStaleCodexRows）：无索引时每个文件全表扫一遍，首扫 O(n²)
+CREATE INDEX IF NOT EXISTS idx_files_tool_session ON files(tool, session_id);
 
 CREATE TABLE IF NOT EXISTS quota (
   tool TEXT PRIMARY KEY,
@@ -350,8 +352,10 @@ export class Store {
       try { return JSON.parse(f.state_json)?._v === version; } catch { return false; }
     });
     if (current) return false;
+    // `+tool` 让 SQLite 走 dedup_key 唯一索引做区间删：写成 tool = 'codex' 时它会选
+    // idx_events_tool_ts，每个新文件都把全部 Codex 事件扫一遍（5000 文件首扫 114s → 10s）。
     for (const [table, prefix] of [['events', 'codex:file:'], ['tool_calls', 'codex:tc:file:']]) {
-      this.db.prepare(`DELETE FROM ${table} WHERE tool = 'codex' AND dedup_key >= ? AND dedup_key < ?`)
+      this.db.prepare(`DELETE FROM ${table} WHERE +tool = 'codex' AND dedup_key >= ? AND dedup_key < ?`)
         .run(`${prefix}${stem}:`, `${prefix}${stem};`);
     }
     return true;

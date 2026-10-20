@@ -2056,6 +2056,7 @@ await (await import('./argon-pricing.mjs')).testArgonPricing(ok);
 await (await import('./official-pricing.mjs')).testOfficialPricing(ok);
 await (await import('./maintenance-loop.mjs')).testMaintenanceLoop(ok);
 await (await import('./opencode-memory.mjs')).testOpencodeMemory(ok);
+await (await import('./scan-complexity.mjs')).testScanComplexity(ok);
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });

@@ -11,8 +11,14 @@ export function readLinesFrom(path, offset, onLine) {
     const stream = createReadStream(path, { start: offset });
     let pos = offset;
     let leftover = null; // Buffer
+    // 超长行（内嵌图片、大段工具输出）跨很多 chunk：没见到换行前只攒 chunk，
+    // 见到换行再一次性拼接。每来一块都 concat 是 O(n²) 拷贝，64MB 单行要 25 秒。
+    let pending = [];
     stream.on('data', (chunk) => {
-      const buf = leftover ? Buffer.concat([leftover, chunk]) : chunk;
+      if (chunk.indexOf(0x0a) === -1) { pending.push(chunk); return; }
+      const parts = leftover ? [leftover, ...pending, chunk] : [...pending, chunk];
+      pending = [];
+      const buf = parts.length > 1 ? Buffer.concat(parts) : chunk;
       let start = 0;
       let idx;
       try {
