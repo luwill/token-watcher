@@ -125,6 +125,34 @@ export async function testHistoryCache(ok) {
       assert.equal(historyQueries, 0);
     });
 
+    // 事务内读取后回滚：dirty 随事务回滚，若事务里重建过缓存就会停在已撤销的行上（#17 review）
+    const byDayAll = () => store.db.prepare(`SELECT date(ts/1000, 'unixepoch', 'localtime') d, SUM(total_tokens) total
+      FROM events GROUP BY d ORDER BY d`).all().map(x => ({ d: x.d, total: x.total }));
+    for (const [label, hide] of [['db.isTransaction', false], ['BEGIN probe (Node < 22.16)', true]]) {
+      await check(`read inside a rolled-back transaction does not poison the cache (${label})`, async () => {
+        const real = store.db;
+        // isTransaction 不可重定义：用 Proxy 遮住它，走 BEGIN 试探分支
+        if (hide) store.db = new Proxy(real, {
+          get: (t, k) => (k === 'isTransaction' ? undefined : typeof t[k] === 'function' ? t[k].bind(t) : t[k]),
+        });
+        try {
+          ev(store, days(6));
+          await summary(store);
+          store.db.exec('BEGIN');
+          try {
+            ev(store, days(6) + H, { total_tokens: 99_999 });
+            const inside = await summary(store);
+            assert.deepEqual(inside.by_day_all, byDayAll(), 'sees its own uncommitted history row');
+          } finally {
+            store.db.exec('ROLLBACK');
+          }
+          await same('after rollback');
+        } finally {
+          store.db = real;
+        }
+      });
+    }
+
     await check('crossing midnight moves the boundary', async () => {
       await summary(store);
       historyQueries = 0;

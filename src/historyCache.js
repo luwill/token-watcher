@@ -14,9 +14,25 @@
  * - 跨过零点：boundary 变化。
  *
  * 缓存的是 SQL 分组行而不是算好的金额：单价、汇率每次现算，改 pricing.json 即时生效。
+ *
+ * 不变式：事务进行中不读也不写缓存。dirty 标记随事务回滚，JS 里的 entries 不会；
+ * 若在事务里重建缓存而事务随后回滚，缓存会停在已撤销的数据上且无从失效。
+ * 因此事务中一律现算（结果对当前事务可见的数据正确），不碰缓存与 guard 表。
  */
 
 const caches = new WeakMap(); // DatabaseSync → { boundary, version, entries }
+
+/** 本连接是否处于事务中。db.isTransaction 自 Node 22.16 起才有，更早版本用 BEGIN 试探 */
+function inTransaction(db) {
+  if (typeof db.isTransaction === 'boolean') return db.isTransaction;
+  try {
+    db.exec('BEGIN');
+  } catch {
+    return true; // cannot start a transaction within a transaction
+  }
+  db.exec('COMMIT');
+  return false;
+}
 
 function install(db) {
   db.exec(`
@@ -38,6 +54,7 @@ function install(db) {
  * compute 只能读 ts < boundary 的行。
  */
 export function cachedHistory(db, key, boundary, compute) {
+  if (inTransaction(db)) return compute(boundary);
   let c = caches.get(db);
   if (!c) {
     install(db);
