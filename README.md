@@ -14,7 +14,7 @@ aggregate statistics after you explicitly opt in.
 [![npm version](https://img.shields.io/npm/v/token-watcher)](https://www.npmjs.com/package/token-watcher)
 [![CI](https://github.com/luwill/token-watcher/actions/workflows/test.yml/badge.svg)](https://github.com/luwill/token-watcher/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-[![platform](https://img.shields.io/badge/platform-macOS%20%F0%9F%92%BB%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)](#运行要求)
+[![platform](https://img.shields.io/badge/platform-macOS%20%F0%9F%92%BB%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)](#requirements)
 
 [简体中文](./README.zh-CN.md) · English
 
@@ -134,6 +134,8 @@ token-watcher extra-roots list                     # show configured mirror root
 token-watcher extra-roots add claude-code ~/mirror/home-pc/claude/projects
 token-watcher extra-roots remove claude-code ~/mirror/home-pc/claude/projects
 ```
+
+The dashboard supports All devices / Local (Mac) / VPS / Windows. Usage charts, sessions and CSV share the selected device scope, while the combined total remains visible. Account quotas, balances and subscription ROI remain shared. See [device attribution and compatibility](docs/DEVICE-FILTER.md).
 
 Any transport that delivers files works — pick what fits your machines:
 

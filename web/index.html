@@ -33,6 +33,13 @@
     <span id="live" class="live off" title="实时连接状态"><i></i>实时</span>
   </div>
   <nav id="range" class="range">
+    <label class="device-select">设备
+      <select id="device" aria-label="按设备查看用量">
+        <option value="all">全部设备</option><option value="local">Mac</option>
+        <option value="vps">VPS</option><option value="windows">Windows</option>
+        <option value="unknown" hidden>未归属</option>
+      </select>
+    </label>
     <button data-days="7" class="on" aria-pressed="true" aria-controls="overview-panel">7 天</button>
     <button data-days="30" aria-pressed="false" aria-controls="overview-panel">30 天</button>
     <button data-days="90" aria-pressed="false" aria-controls="overview-panel">90 天</button>
@@ -49,8 +56,10 @@
 <main>
   <div id="overview-panel">
     <div id="load-error" class="load-error" hidden></div>
+    <div class="device-overview"><span id="device-view">全部设备</span><span id="device-total" class="dim"></span></div>
     <section class="cards" id="cards"></section>
 
+    <p id="account-scope" class="dim account-scope" hidden>账户配额、余额和订阅 ROI 为跨设备汇总</p>
     <div id="quota-extra" class="quota-extra"></div>
     <div id="quota-wide" class="quota-wide"></div>
 

@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { deviceDb, parseDevice, sourceDevice } from '../src/devices.js';
+import { usageUrl } from '../web/lib/devices.js';
+const options = { dataDir: '/tmp/host/.tokenmeter', sources: [{ roots: ['/tmp/host/.claude/projects'] }],
+  extraRoots: { 'claude-code': ['/tmp/other-machine'] } };
+assert.equal(sourceDevice('/tmp/host/.claude/projects/a.jsonl', options), 'local');
+assert.equal(sourceDevice('/tmp/host/.tokenmeter/remote/vps/claude/a.jsonl', options), 'vps');
+assert.equal(sourceDevice('/tmp/host/.tokenmeter/remote/windows-usage/codex/a.jsonl', options), 'windows');
+assert.equal(sourceDevice('/tmp/host/.tokenmeter/remote/vps-copy/a.jsonl', options), 'unknown');
+assert.equal(sourceDevice('/tmp/other-machine/a.jsonl', options), 'unknown');
+assert.equal(parseDevice("windows' OR 1=1 --"), null);
+const db = { prepare(sql) { return sql; } };
+assert.equal(deviceDb(db), db);
+assert.match(deviceDb(db, 'windows').prepare('SELECT * FROM events'), /main.events WHERE device = 'windows'/);
+assert.throws(() => deviceDb(db, 'windows').prepare('UPDATE events SET total_tokens=0'));
+assert.throws(() => deviceDb(db, "vps'"));
+assert.equal(usageUrl('/api/summary', { days: 7 }, 'windows'), '/api/summary?days=7&device=windows');
+assert.match(usageUrl('/api/session/name', { tool: 'claude-code', day: '2026-10-14' }, 'vps'), /device=vps$/);
+assert.throws(() => usageUrl('/api/summary', {}, 'bad'));
+console.log('PASS device boundaries, unknown mirrors, read-only query scope, invalid devices and shared frontend URL builder');

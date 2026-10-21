@@ -16,6 +16,7 @@ import { ensureFxRate, setOnChange as onFxLoaded } from './fx.js';
 import { scheduleLeaderboardUpload, getLeaderboardState, fetchLeaderboard } from './leaderboard.js';
 import { localDayStart, localRangeStart } from './timeRange.js';
 import { cachedHistory } from './historyCache.js';
+import { deviceDb, deviceOverview, parseDevice } from './devices.js';
 
 const DB_DIRPATH = dirname(DB_PATH);
 
@@ -98,11 +99,10 @@ function computeClaude5h(db, now = Date.now()) {
  * - ok：其余（含"只是没在用"——不误报）
  * doctor 命令复用同一份逻辑（导出），两处口径必须一致。
  */
-export function computeHealth(db, scannerStats) {
+export function computeHealth(db, scannerStats, now = Date.now()) {
   // 从注册表推导，不再另抄一份：手抄的清单在新增数据源时必漏，
   // 漏掉的源不会报错，只是从健康自检里静默消失——正是这类检查最不该有的失效方式。
   const tools = SOURCES.map(s => s.tool);
-  const now = Date.now();
   // 各源事件数要数全部历史：今天 0 点前的部分走历史缓存（historyCache.js），只现数今天
   const countsSince = (since, until = Number.MAX_SAFE_INTEGER) => db.prepare(
     'SELECT tool, COUNT(*) n, MAX(ts) last_ts FROM events WHERE ts >= ? AND ts < ? GROUP BY tool').all(since, until);
@@ -143,8 +143,8 @@ export function computeHealth(db, scannerStats) {
   });
 }
 
-export async function buildSummary(store, scannerStats, days, { balanceStatus = [], now = Date.now() } = {}) {
-  const db = store.db;
+export async function buildSummary(store, scannerStats, days, { balanceStatus = [], now = Date.now(), device = 'all' } = {}) {
+  const db = deviceDb(store.db, device);
   const todayStart = localDayStart(now);
   const yStart = localDayStart(now, -1);
   const localKey = (ms) => {
@@ -156,6 +156,12 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
 
   // 按自然日对齐：近 N 天 = 今天 0 点往前 N-1 天，避免 21 点查 7 天返回 8 个日桶
   const rangeStart = localRangeStart(days, now);
+  const devices = deviceOverview(store.db, rangeStart, { now });
+  const allDeviceTotals = devices.reduce((t, d) => ({
+    all_time_tokens: t.all_time_tokens + d.total,
+    range_tokens: t.range_tokens + d.range_tokens,
+    range_events: t.range_events + d.range_events,
+  }), { all_time_tokens: 0, range_tokens: 0, range_events: 0 });
 
   // 全表按本地日聚合：全量总数、峰值日、活跃日集合都从这一份推出。
   // 面板每次推送都会重取 summary：今天 0 点前的部分走历史缓存，只现查今天（historyCache.js）。
@@ -192,7 +198,7 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     SELECT tool, SUM(total_tokens) total, COUNT(*) n FROM events
     WHERE ts >= ? GROUP BY tool ORDER BY total DESC`).all(rangeStart);
   const recent = db.prepare(`
-    SELECT ts, tool, model, project, input_tokens, cached_input, output_tokens, total_tokens
+    SELECT ts, tool, model, project, device, input_tokens, cached_input, output_tokens, total_tokens
     FROM events ORDER BY ts DESC, id DESC LIMIT 15`).all();
 
   const daySet = new Set(dayAll.map(r => r.d));
@@ -212,6 +218,9 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
   return {
     generated_at: now,
     range_days: days,
+    device,
+    devices,
+    all_device_totals: allDeviceTotals,
     offline: isOffline(),
     totals: {
       all_time_tokens: allTime.total || 0,
@@ -229,14 +238,14 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     by_tool: toolRows,
     quota: {
       codex: codexQuotaView(store.getQuota('codex')),
-      claude5h: computeClaude5h(db),
+      claude5h: computeClaude5h(store.db), // Account window spans devices.
       claude_usage: claudeUsageView(store), // 官方窗口（有凭证时）；null → 前端回落 5h 推算
       zcode: zcodeQuotaView(store), // GLM Coding Plan 积分窗口（5h/月度）+ MCP 调用
     },
     balances: store.getBalances(),
     credits: store.creditSummary(), // 以积分为计费单位的源（Qoder 等）：今日/累计
     wb_rates: store.getRates(),
-    health: computeHealth(db, scannerStats || {}),
+    health: computeHealth(db, scannerStats || {}, now),
     balance_status: balanceStatus,
     live: { grok: (() => {
       const q = store.getQuota('grok:live');
@@ -244,8 +253,8 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
       return { ...q.data, ts: q.ts };
     })() },
     costs,
-    roi: await computeRoi(db, { rate: costs.usd_to_cny }),
-    recon: computeRecon(db, store, await loadPricing(), { rate: costs.usd_to_cny }),
+    roi: await computeRoi(store.db, { rate: costs.usd_to_cny }),
+    recon: computeRecon(store.db, store, await loadPricing(), { rate: costs.usd_to_cny }),
     recent,
   };
 }
@@ -405,12 +414,17 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
     }
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
+    const device = parseDevice(url.searchParams.get('device') ?? 'all');
+    const usageRoute = ['/api/summary', '/api/sessions', '/api/tool-activity', '/api/export.csv'].includes(p)
+      || p.startsWith('/api/session/');
+    if (usageRoute && device === null) return json(res, 400, { error: 'invalid device' });
 
     if (p === '/api/summary') {
       const days = parseRangeDays(url.searchParams.get('days'));
       try {
         return json(res, 200, await buildSummary(store, scanner.stats, days, {
           balanceStatus: balancePoller?.status?.() ?? [],
+          device,
         }));
       } catch (err) {
         log(`summary error: ${err.message}`); // 详情仅进本地日志；错误消息可能含本地路径，不外发
@@ -422,30 +436,30 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
         ? url.searchParams.get('day')
         : new Date().toLocaleDateString('sv-SE'); // 本地今天 YYYY-MM-DD
       const tool = url.searchParams.get('tool') || '';
-      const rows = db_safe(store).prepare(`
+      const rows = deviceDb(db_safe(store), device).prepare(`
         SELECT session_id, tool, MIN(ts) first_ts, MAX(ts) last_ts, COUNT(*) calls,
                SUM(total_tokens) total, MAX(total_tokens) peak, MAX(project) project,
                GROUP_CONCAT(DISTINCT model) models
         FROM events WHERE date(ts/1000, 'unixepoch', 'localtime') = ? ${tool ? 'AND tool = ?' : ''}
         GROUP BY tool, session_id ORDER BY total DESC LIMIT 60`)
         .all(...(tool ? [day, tool] : [day]));
-      return json(res, 200, { day, sessions: rows });
+      return json(res, 200, { day, device, sessions: rows });
     }
     if (p.startsWith('/api/session/')) {
       const sid = parseSessionId(p.slice('/api/session/'.length));
       if (sid === null) return json(res, 400, { error: 'bad id' });
       // 列表按 (tool, session_id) 分组，钻取也按这一对取；不带 tool 时保持旧行为（全部工具）
       const tool = url.searchParams.get('tool') || '';
-      const rows = db_safe(store).prepare(`
+      const rows = deviceDb(db_safe(store), device).prepare(`
         SELECT ts, model, input_tokens, cached_input, cache_write, output_tokens, total_tokens
         FROM events WHERE session_id = ? ${tool ? 'AND tool = ?' : ''} ORDER BY ts LIMIT 5000`)
         .all(...(tool ? [sid, tool] : [sid]));
-      return json(res, 200, { session_id: sid, tool: tool || null, events: rows });
+      return json(res, 200, { session_id: sid, tool: tool || null, device, events: rows });
     }
     if (p === '/api/tool-activity') {
-      const days = Math.max(1, Math.min(3650, Number(url.searchParams.get('days')) || 30));
+      const days = parseRangeDays(url.searchParams.get('days'));
       const since = localRangeStart(days);
-      const rows = db_safe(store).prepare(`
+      const rows = deviceDb(db_safe(store), device).prepare(`
         SELECT name, tool, COUNT(*) n FROM tool_calls WHERE ts >= ?
         GROUP BY name, tool ORDER BY n DESC LIMIT 60`).all(since);
       const merged = new Map();
@@ -455,12 +469,12 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
         m.n += r.n;
         m.tools[r.tool] = (m.tools[r.tool] || 0) + r.n;
       }
-      return json(res, 200, { days, tools: [...merged.values()].sort((a, b) => b.n - a.n).slice(0, 14) });
+      return json(res, 200, { days, device, tools: [...merged.values()].sort((a, b) => b.n - a.n).slice(0, 14) });
     }
     if (p === '/api/export.csv') {
       const days = parseRangeDays(url.searchParams.get('days'));
       const since = localRangeStart(days);
-      const rows = db_safe(store).prepare(`
+      const rows = deviceDb(db_safe(store), device).prepare(`
         SELECT date(ts/1000, 'unixepoch', 'localtime') d, tool,
                SUM(input_tokens) input, SUM(cached_input) cached, SUM(cache_write) cache_write,
                SUM(output_tokens) output, SUM(total_tokens) total, COUNT(*) calls
@@ -470,7 +484,7 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
         rows.map(r => [r.d, r.tool, r.input, r.cached, r.cache_write, r.output, r.total, r.calls].map(esc).join(',')).join('\n') + '\n';
       res.writeHead(200, {
         'content-type': 'text/csv; charset=utf-8',
-        'content-disposition': `attachment; filename="token-watcher-${days || 'all'}d.csv"`,
+        'content-disposition': `attachment; filename="token-watcher-${device === 'all' ? '' : device + '-'}${days || 'all'}d.csv"`,
       });
       return res.end(csv);
     }

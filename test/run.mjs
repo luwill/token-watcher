@@ -2060,6 +2060,10 @@ await (await import('./scan-complexity.mjs')).testScanComplexity(ok);
 await (await import('./history-cache.mjs')).testHistoryCache(ok);
 await (await import('./idle-scan.mjs')).testIdleScan(ok);
 await (await import('./scan-rerun.mjs')).testScanRerun(ok);
+await (await import('./devices.mjs')).testDevices(ok);
+await import('./device-pure.mjs');
+await import('./windows-usage.mjs');
+await import('./windows-sync.mjs');
 
 /* ---------- 清理 ---------- */
 rmSync(HOME, { recursive: true, force: true });

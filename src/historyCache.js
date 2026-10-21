@@ -20,6 +20,8 @@
  * 因此事务中一律现算（结果对当前事务可见的数据正确），不碰缓存与 guard 表。
  */
 
+export const CACHE_DB = Symbol('history database');
+export const CACHE_SCOPE = Symbol('history scope');
 const caches = new WeakMap(); // DatabaseSync → { boundary, version, entries }
 
 /** 本连接是否处于事务中。db.isTransaction 自 Node 22.16 起才有，更早版本用 BEGIN 试探 */
@@ -54,6 +56,8 @@ function install(db) {
  * compute 只能读 ts < boundary 的行。
  */
 export function cachedHistory(db, key, boundary, compute) {
+  key = JSON.stringify([db[CACHE_SCOPE] || 'all', key]);
+  db = db[CACHE_DB] || db;
   if (inTransaction(db)) return compute(boundary);
   let c = caches.get(db);
   if (!c) {

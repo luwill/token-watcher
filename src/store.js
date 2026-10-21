@@ -3,6 +3,7 @@ import { normalizeModel } from './models.js';
 import { canonicalCodexKey, migrateCodexKeys, offloadCodexKeyArchive } from './codexKeys.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { installDeviceTracking } from './deviceTracking.js';
 
 /**
  * 归一化事件模型：
@@ -179,6 +180,7 @@ export class Store {
       INSERT INTO quota (tool, ts, data) VALUES (?, ?, ?)
       ON CONFLICT(tool) DO UPDATE SET ts = excluded.ts, data = excluded.data
       WHERE excluded.ts > quota.ts`); // 只接受更新的快照，扫描顺序无关
+    installDeviceTracking(this);
   }
 
   insertEvent(e) {

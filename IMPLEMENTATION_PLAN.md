@@ -1,5 +1,45 @@
 # 修复 token 统计与官方口径的三处偏差
 
+## 2026-10-14 发布显示调整与 PR #14 / #15 修复（1.9.5）
+
+用户明确授权提交、推送 Antigravity 名称显示调整，并与已合并的两个 PR 一起发布新版本；包含本次已验收产物的现有 npm-release 环境审核。仅沿用本对话批准的 `/private/tmp/token-watcher-pr-repair-4g3ayoux/` 合成库与临时文件清理范围。
+
+1. [x] 核对 GitHub/npm 版本与 main，确认 1.9.5 可用，整理限定本次范围的独立候选。
+2. [x] 同步版本、lockfile、更新日志与发行说明，验证两版本完整回归、universal 构建与干净安装包。
+3. [x] 提交推送本次改动，确认最新提交 CI，创建版本标签并核对云端草稿产物。
+4. [x] 通过现有 OIDC 流程发布，核对 GitHub/npm 版本、产物与 provenance，再更新 Homebrew tap。
+
+Windows 同步任务的未提交文件与私人配置不进入发行包；正式数据库和本机采集服务不进入此次发布步骤。
+
+预检：GitHub latest 与 npm latest 均为 1.9.4，main=cd9a666；v1.9.5 标签与 npm 1.9.5 均未占用。独立候选从合并后的 main 建立，仅带入六个已授权的显示/说明文件及版本、发行说明变化。
+
+本地候选：74 个包内文件与源码逐字节一致；菜单栏包含 x86_64/arm64。Node 22.13.1/24.14.0 完整隔离回归分别通过 899/903 项；干净安装版本、Antigravity 名称、请求序号及八个资源/API 端点通过。安装包 SHA-256=aef841698e6964fdbbbb1ad07f5da5aac734e234190504af078601a8e4983467；收据位于批准临时目录的 `release-1.9.5/`。
+
+版本提交 553a4be 已推送 main；[CI 38550917540](https://github.com/luwill/token-watcher/actions/runs/38550917540) 的 10 项任务全部成功。标签与后续草稿/正式发布仅针对该已验收提交。
+
+v1.9.5 标签已推送，[草稿运行 38551340589](https://github.com/luwill/token-watcher/actions/runs/38551340589) 验证成功；云端草稿包与本地候选逐字节相同，GitHub asset digest 和 SHA256SUMS 一致。正式 OIDC 发布已启动。源工作区通过三方合并同步到版本提交，保留并行设备与 Windows 工作树变化。
+
+正式 [发布运行 38551703601](https://github.com/luwill/token-watcher/actions/runs/38551703601) 经本轮授权的 npm-release 审核，四项任务全部成功；npm version/latest=1.9.5，[GitHub v1.9.5 Release](https://github.com/luwill/token-watcher/releases/tag/v1.9.5) 已公开为 latest。registry、本地、草稿和待审正式包逐字节相同，SHA-1/SHA-512 与 asset digest 均匹配。SLSA subject SHA-512、main、release.yml、提交 553a4be 与本运行精确绑定；npm audit signatures 无 invalid/missing。
+
+Homebrew [tap 提交 e669342](https://github.com/luwill/homebrew-tap/commit/e669342b17c0f0e05baad3c7e0f84e709f0d6bfd) 已公开并核对远端文件，地址和 SHA-256 正确，Ruby 语法通过；主仓库公式回填提交 35a3bc7 已推送并同步到本地，903 项完整隔离回归通过。最后的 [主线元数据 CI 38552830564](https://github.com/luwill/token-watcher/actions/runs/38552830564) 十项任务全绿，发布完成。发布收据：批准目录内 `release-1.9.5/release-verification.json`。
+
+## 2026-10-14 修复并合并 PR #14 / #15
+
+用户授权修复两项审查问题，测试通过后合并原 PR。使用独立候选目录，保留当前未提交的显示与 Windows 同步改动。
+
+1. [x] 固定 main 与两个 PR 的原始 SHA，确认贡献分支写权限，准备隔离候选和验证环境。
+2. [x] 修复 OpenCode 迭代语句生命周期及会话详情请求竞态，增加可失败的回归用例。
+3. [x] 验证 Node 22.13 / 24、内存受限扫描及迟到响应；完整回归通过后提交并更新原 PR。
+4. [x] 确认两个 PR 的最新 SHA 与多平台 CI，再依次合并并检查合并后 main。
+
+正式用量库不进入验证。用户确认允许仅在 `/private/tmp/token-watcher-pr-repair-4g3ayoux/` 内创建合成数据库和清理测试临时文件。原始 main=1cacb50，PR #14=a54544b，PR #15=3cb0297；两个贡献分支均允许维护者修改。
+
+已确认旧 #15 在 Node 22.13.1 下同时失败于强制 GC 和 48 MiB 堆扫描；旧 #14 的竞态回归出现 11 项失败。修复后 #15 在 Node 22.13.1/24.14.0 完整隔离回归通过，#14 定向回归及组合候选的完整隔离回归均通过。
+
+PR #15 修复头为 6d4d72f，Node 22.13.1/24.14.0 分别通过 860/864 项；PR #14 组合修复头为 37683e9，两版本分别通过 897/901 项。普通推送原贡献分支，保留全部原提交历史；两个 PR 的新 CI 各 10 项全绿。测试日志保存在批准目录的 `runtime/logs/`，可复用方法记录于 `learnings/2026-10-14-pr-streaming-and-request-lifetime.md`。
+
+已依次合并 #15（c827561）和 #14（cd9a666）；最终 main 与已测试的组合候选树完全相同（83ec9a3813aaefb52216b21b00cd3ce6850ed484），[合并后主线 CI 38547100768](https://github.com/luwill/token-watcher/actions/runs/38547100768) 的 10 项任务全部成功。本地 main 已快进，5 个合并文件与测试候选逐字节一致；既有显示改动保留，Windows 文件与计划的并行更新不回退。未发布或改正式数据库/服务。
+
 ## 2026-10-14 发布 Cowork 与 Windows 路径修复（1.9.4）
 
 用户明确授权提交、推送 GitHub 并发布 1.9.4；该授权包含本版本既有 npm-release 环境的发布审核。Windows 内网同步任务的文件和个人配置不进入本次提交/发布。测试沿用已批准的隔离目录、合成库与清理范围。
@@ -12,6 +52,40 @@
 正式用量库与本机全局安装/服务不进入发布步骤；本次不会自行回填或重启。
 
 最终安装包 SHA-256=4ecb4f363a26d80c9db536c8b4f5eea20dd7457ae281a87d28873fb69f98d292；本地候选、草稿、待审正式运行与 registry 包完全一致。73 个包内文件、30 项定向测试、863 项完整隔离回归及干净安装验证完成。
+
+## 2026-10-14 Windows 公司内网自动同步接入
+
+### 用户选择只同步用量元数据
+
+Windows SSH 已修复，实际握手服务端为9.5；用户提供的主机公钥经SHA-256核对并与实际握手一致，已固定专用known_hosts，免密成功，Node=22.13.0。自动审批拒绝完整会话传输后，用户明确选择仅用量元数据；原始日志传输不再属于当前方案。
+
+1. [x] 验证网络/身份/运行时，仅读数量得Claude 43个日志约55MB、Codex 87个约319MB，均无压缩档。
+2. [x] 实现Windows本机白名单投影，仅保留用量/时间/模型和哈希标识；用合成日志验证无正文/路径/凭证泄露，保持既有采集器兼容。
+3. [x] 部署导出器并只同步导出的元数据；内存核对口径与重复执行，更新5小时任务模板。
+4. [x] 取得数据库操作确认后登记元数据roots、重启单一正式服务并启用任务；验证总账与定时任务。
+
+元数据投影、现有已安装采集器口径、追加/重写保护，以及客户端拒绝原始路径/幂等下载的文件内存测试通过。导出器上传后SHA-256已核对，Mac已安装独立元数据程序，生效roots尚未改变。 首次仅元数据同步130个文件、3,960,178 bytes；第二次下载0。现有1.9.2采集器内存核算6,293条、738,714,177 tokens，重复扫描新增0；所有项目均为windows-office。Claude 1,108条/204,422,654 tokens，Codex 5,185条/534,291,523 tokens。用户已明确确认正式库备份/导入、现有服务重启和5小时任务启用。初步内存汇总未包含Store的较完整流式片段补齐，正式导入后按真实Store规则逐字段核对6,293条、739,019,282 tokens（Claude 204,727,759；Codex 534,291,523），所有字段差异为0，已补充多片段补齐专项测试。
+
+执行事故：部署失败后误启动旧同步程序，复制了129个原始日志及暂存/状态文件约374MB，未登记roots或导入数据库；已禁用旧程序，隔离数据并告知用户。用户明确确认后，已精确删除该隔离目录并保存清理回执，Windows原件未动。后续部署和运行分步核验成功状态，禁止失败后继续依赖步骤。
+
+最终接入验收：正式库备份于~/.tokenmeter/backup-windows-metadata-20261014-180215/tokenmeter.db，62,398,464 bytes，SHA256 cae928540189318718230d0f94d331fbd8a40ee9fb14d8c1c659b3475b0643df，quick_check=ok；导入前112,513条/19,610,253,183 tokens，导入后备份既有行缺失0、修改0。生效roots保留VPS并仅追加windows-usage下Claude/Codex目录；重启既有com.tokenmeter.server，未启动第二个写进程。com.tokenmeter.windows-sync已加载，RunAtLoad=true、run interval=18000 seconds、首次退出码0；首次自动触发捕获Windows新会话，当前131个元数据文件、6,309条/740,223,854 tokens（Claude 1,108条/204,727,759；Codex 5,201条/535,496,095）。现有VPS任务仍300秒/退出码0；仪表盘HTTP200、parse_errors=0、quick_check=ok。回执在~/.tokenmeter/remote/windows/integration-receipt.json。
+
+1. [x] 检查物理网卡、路由及 SSH 协议握手，排除 TUN 接管造成的假连通。
+2. [x] 准备只同步 Claude Code / Codex 日志的增量 SFTP 脚本和独立 Mac 定时任务配置，保留 VPS 配置。
+3. [x] 验证脚本与失败恢复，生成 Windows OpenSSH、公钥授权和限源防火墙配置命令。
+4. [x] Windows 完成配置后核对主机指纹、免密及首次同步；用户确认后正式库仅导入元数据并启用5小时任务。
+
+初期未运行数据库测试或正式库扫描；后续隔离目录删除与正式库备份/导入均由用户分别明确确认。其他会话进行中的采集器改动保持原样。
+
+实测：Mac en0=192.168.10.245，目标192.168.20.61默认经utun4/198.18.0.1；默认TCP连接成功但SSH无握手，绑定en0的22/445均超时，尚不能认定Windows可达。用户确认Mac为公司办公网络，Windows使用Terminal（不据此排除WSL）。专用密钥已生成；脚本、带公钥的Windows配置脚本、5小时LaunchAgent模板、pending roots保存在~/.tokenmeter/remote/windows相关路径；未加载任务或写入生效roots，实际脚本仍报LAN SSH超时。9项专项检查（含真实本地SFTP空格/方括号文件名传输）、plist语法与diff空白检查通过；PowerShell尚未实机执行，待用户安装SSH并返回主机身份和目录检查结果后续接入。用户随后将同步周期改为每5小时（StartInterval=18000），模板和说明已更新并通过plist语法验证。
+
+Windows 实机反馈：旧 setup 在首次 Start-Service sshd（第39行）报 CouldNotStartService，后面的公钥配置尚未执行。补充只读启动诊断脚本与 setup 失败诊断；将防火墙备份移出 SSH 系统目录，避免提前创建该目录产生权限继承问题。微软官方有目录权限导致同类启动错误的记录，但当前原因待 Windows 的配置校验、ACL 和事件输出确认；不直接重置 ACL、覆盖主机密钥或重装。5小时同步设置保持，仍未启用任务或导入数据库。
+
+后续截图：SSH 根目录 owner=Administrators、SYSTEM/Administrators=FullControl、Authenticated Users=ReadAndExecute，符合微软所列目录权限；不能据此排除 logs/配置/主机密钥 ACL。sshd -t 与输出退出码的字符串被合在一条命令，没有可见退出码；OpenSSH 日志查询的 SilentlyContinue 也掩盖了日志不存在/无记录等情况。补充 sc.exe qc/query、显式分隔的退出码、日志启用/记录状态，以及 System 的 Service Control Manager 和 Application 1000/1001 记录，优先区分服务程序路径/账号、服务退出码与进程崩溃，尚未确定根因。
+
+最新实机输出：服务路径为系统 inbox OpenSSH、账号 LocalSystem；sshd -t=-1073741511，经32位换算为0xC0000139。微软NTSTATUS定义为STATUS_ENTRYPOINT_NOT_FOUND，确认所需DLL入口不可用；System事件7000/7009记录30秒服务响应超时。优先排查程序依赖；微软官方另有客户端/服务端/libcrypto.dll版本不匹配导致同类1053超时的说明，当前仅为有来源的候选解释，具体DLL/入口与实际版本差异尚未确认。诊断脚本补充系统/文件版本与十六进制状态；不提高服务超时、不替换DLL或删除/重装组件。后续若为FOD错配，按对应Windows累计更新修复，先取得系统build/组件版本再给具体步骤。
+
+组件输出进一步确认：Windows 10 21H2/19044.7725；inbox sshd.exe=7.7.2.3/OpenSSH_7.7p1，ssh.exe=9.5.5.2/OpenSSH_9.5p2，System32/libcrypto.dll=3.8.2.0。服务端/客户端跨代错配已确认，结合0xC0000139，与官方错配故障一致；仍未取得具体缺失函数的加载器记录。优先从Windows Update安装适用的累计更新：2026-10-13 KB5126657支持适用的LTSC/ESU版本，将对应21H2系统升至19044.7807；实际edition/架构未由截图确认，不直接指定MSU包或强装。完成更新并按提示重启后，须重新验证sshd -t=0、服务Running，再重跑已准备setup完成公钥等配置。若公司策略不提供更新或更新后仍未修复，依据具体提示选择下一步；当前不删除组件、不手工替换DLL或调整服务超时。
 
 ## 2026-10-14 修复已确认的 Cowork 漏采与 Windows 路径
 
@@ -346,3 +420,22 @@ P2 已知限制随发布说明披露，不在本轮扩展重构；不重启用�
 发布预验收：1.8.0 完整回归 550 项通过；prepack 构建 x86_64 + arm64，真实包 54 个文件与当前源码逐文件一致，无凭证/数据库/账号配置。临时 consumer 安装成功，CLI 版本及 8 个资源/API 端点通过。产物和日志：/private/tmp/token-watcher-release-1.8.0/。
 
 发布进度（2026-09-25）：提交 1aa534c 已推送 origin/main，v1.8.0 标签指向该提交。CI：https://github.com/luwill/token-watcher/actions/runs/36024063487 。GitHub Release：https://github.com/luwill/token-watcher/releases/tag/v1.8.0 ，包含 npm 格式安装包及 SHA256SUMS；已注明 npm 尚未发布。npm 登录已恢复到 louwill，发布命令等待官方双重验证，浏览器工具不允许操作该安全验证页面，由用户自行完成。未修改真实用量库或重启本机服务。
+
+## 2026-10-14 设备筛选、Windows 同步与视频工具
+
+- [x] 完成设备归属、统一 API/CSV 筛选和前端切换，保留全设备总量与共享账户信息。
+- [x] Windows 只导出白名单用量元数据；传输前后校验路径、哈希与字段，完整会话镜像需显式选择。
+- [x] 完成合成与本机验收；本机具体网络地址、数据库统计、备份位置和视频数据回执保留在本地，不作为通用产品保证。
+- [x] 保留可复用的日度用量导出与视频渲染脚本，生成的数据和视频不进入 Git 或 npm 包。
+
+## 2026-10-21 整合本地改动并发布 1.9.6
+
+用户已明确授权整合、完整回归、提交推送和发布 1.9.6。测试仅使用已批准临时目录中的合成数据；正式数据库、同步任务和服务不在本次操作范围内。
+
+1. [x] 备份全部 28 个本地改动文件与二进制补丁，核对最新 main，建立独立候选。
+2. [x] 逐项解决三方冲突，整合设备筛选、Windows 元数据同步与视频脚本，复核公开文档及打包范围。
+3. [x] Node 22/24 完整回归、专项测试、语法/格式检查、universal 打包和干净安装验证。
+4. [ ] 提交推送并核对完整 CI，固定 1.9.6 标签、草稿及产物校验值。
+5. [ ] OIDC 发布并核对 npm/GitHub、来源证明、签名和 Homebrew；同步本地 checkout。
+
+1.9.6 本地验收：Node 22.13.1 / 24.14.0 分别通过 979 / 983 项主回归检查及 Windows 专项；85 个包文件与候选逐字节一致，菜单栏含 arm64/x86_64，干净 consumer 安装的 14 项检查与五种设备范围通过。设备缓存按连接和设备隔离，健康检查与汇总共用时间边界。测试仅使用隔离合成数据。

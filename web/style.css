@@ -71,6 +71,11 @@ h1 { font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 
 .range { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; }
+.device-select { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); margin-right: 8px; }
+.device-select select { padding: 6px 8px; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.device-select select:focus-visible { outline: 2px solid var(--text-soft); outline-offset: 2px; }
+.device-overview { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 10px; }
+.account-scope { font-size: 12px; margin: 0 0 10px; }
 .range button, .icon-btn, .heat-modes button {
   transition: color .15s, background-color .15s, border-color .15s;
 }

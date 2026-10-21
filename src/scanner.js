@@ -3,6 +3,7 @@ import { watch as watchCb, existsSync } from 'node:fs';
 import path, { basename, dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { SOURCES } from './config.js';
+import { sourceDevice } from './devices.js';
 import { collectClaudeFile } from './collectors/claude.js';
 import { collectCodexFile } from './collectors/codex.js';
 import { collectZcodeDb } from './collectors/zcode.js';
@@ -167,7 +168,7 @@ export class Scanner extends EventEmitter {
         // 先在事务外解析（含 await 读文件），写入只记下；事务里同步回放。
         // 事务若跨 await，同一连接上轮询器的写入会落进来、随解析失败一起被回滚。
         if (src.collector === 'codex') codexTouched = true;
-        const staged = this.store.stageWrites();
+        const staged = this.store.stageWrites({ device: sourceDevice(path) });
         let r;
         try {
           r = await COLLECTORS[src.collector](staged.store, {

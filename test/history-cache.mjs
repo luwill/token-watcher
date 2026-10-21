@@ -55,7 +55,7 @@ export async function testHistoryCache(ok) {
     const st = prepare(sql);
     if (/ts >= \? AND ts < \?/.test(sql)) {
       const all = st.all.bind(st);
-      st.all = (...a) => { if (a[1] !== undefined && a[1] < Number.MAX_SAFE_INTEGER) historyQueries++; return all(...a); };
+      st.all = (...a) => { if (a.at(-1) !== undefined && a.at(-1) < Number.MAX_SAFE_INTEGER) historyQueries++; return all(...a); };
     }
     return st;
   };

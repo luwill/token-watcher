@@ -7,8 +7,13 @@ import {
 } from './lib/theme.js';
 import { pickSeries, assignSlots, stackTipFormatter, dayAxis, fillDays } from './lib/series.js';
 import { chartTooltip as makeTooltip } from './lib/tooltip.js';
+import { usageUrl } from './lib/devices.js';
 
 let days = 7;
+let device = 'all';
+let summaryRequest = 0;
+let sessionsRequest = 0;
+let toolsRequest = 0;
 let topView = 'overview';
 let heatMode = 'd';
 let lastSummary = null;
@@ -108,17 +113,20 @@ document.getElementById('theme-btn').addEventListener('click', () => {
 });
 
 async function load() {
+  const request = ++summaryRequest;
   const banner = document.getElementById('load-error');
   try {
-    const res = await fetch(`/api/summary?days=${days}`);
+    const res = await fetch(usageUrl('/api/summary', { days }, device));
     if (!res.ok) throw new Error(`服务返回 ${res.status}`);
     const data = await res.json();
     // 后端出错时返回的是 {error}，直接喂给 render() 会在 totals 上抛 TypeError
     if (!data?.totals) throw new Error(data?.error || '响应缺少 totals');
+    if (request !== summaryRequest) return;
     lastSummary = data;
     if (banner) banner.hidden = true;
     render();
   } catch (err) {
+    if (request !== summaryRequest) return;
     // 静默失败会让页面停在旧数字上却毫无迹象——宁可显眼地说明"这是上次的数据"
     if (!banner) return;
     banner.textContent = `数据刷新失败：${err.message}。当前显示的是上次成功获取的数据。`;
@@ -129,6 +137,14 @@ async function load() {
 function render() {
   const s = lastSummary;
   const t = s.totals;
+  const label = s.device === 'all' ? '全部设备' : s.devices?.find(d => d.id === s.device)?.label || s.device;
+  document.getElementById('device-view').textContent = label;
+  document.getElementById('device-total').textContent = `全部设备累计 ${fmt(s.all_device_totals?.all_time_tokens ?? t.all_time_tokens)} tokens`;
+  document.getElementById('account-scope').hidden = s.device === 'all';
+  for (const d of s.devices || []) {
+    const option = document.querySelector(`#device option[value="${d.id}"]`);
+    if (option) { option.textContent = d.label; if (d.id === 'unknown') option.hidden = !d.events; }
+  }
   const cards = [
     [fmt(t.all_time_tokens), '累计 Tokens'],
     [fmt(t.today_tokens), '今日消耗'],
@@ -517,9 +533,11 @@ charts.trend.on('click', (params) => {
 
 /** 工具活动（Claude/ccmr tool_use + ZCode tool_usage；Codex 本地无记录） */
 async function renderToolActivity() {
+  const request = ++toolsRequest;
   try {
-    const res = await fetch('/api/tool-activity?days=30');
+    const res = await fetch(usageUrl('/api/tool-activity', { days }, device));
     const { tools } = await res.json();
+    if (request !== toolsRequest) return;
     if (!charts.toolsAct) return;
     if (!tools?.length) return markEmpty('toolsAct');
     clearEmpty('toolsAct');
@@ -558,13 +576,15 @@ async function renderToolActivity() {
 
 /** 会话钻取：某天的会话列表 + 单会话 token 曲线 */
 async function loadSessions(day) {
+  const request = ++sessionsRequest;
   const dateInput = document.getElementById('sess-date');
   const d = day || dateInput.value || new Date().toLocaleDateString('sv-SE');
   if (!day) dateInput.value = d;
   document.getElementById('sess-day').textContent = `· ${d}`;
   try {
-    const res = await fetch(`/api/sessions?day=${d}`);
+    const res = await fetch(usageUrl('/api/sessions', { day: d }, device));
     const { sessions } = await res.json();
+    if (request !== sessionsRequest) return;
     const host = document.getElementById('sessions');
     if (!sessions?.length) {
       host.innerHTML = '<div class="empty-note">当日无会话（点击趋势图柱子或切换日期）</div>';
@@ -602,7 +622,7 @@ async function showSessionDetail(sid, tool) {
     box.style.display = 'none'; charts.sess.clear();
   };
   try {
-    const res = await fetch(`/api/session/${encodeURIComponent(sid)}?tool=${encodeURIComponent(tool)}`);
+    const res = await fetch(usageUrl(`/api/session/${encodeURIComponent(sid)}`, { tool }, device));
     if (request !== sessionDetailRequest) return;
     if (!res.ok) { hide(); return; }
     const { events } = await res.json();
@@ -637,7 +657,16 @@ async function showSessionDetail(sid, tool) {
 
 document.getElementById('sess-date').addEventListener('change', () => loadSessions());
 document.getElementById('export-btn').addEventListener('click', () => {
-  window.open(`/api/export.csv?days=${days}`, '_blank');
+  window.open(usageUrl('/api/export.csv', { days }, device), '_blank');
+});
+document.getElementById('device').addEventListener('change', (event) => {
+  device = event.target.value;
+  // Invalidate dependent requests immediately, before the new summary arrives.
+  sessionsRequest++; toolsRequest++; sessionDetailRequest++;
+  document.getElementById('sess-detail').style.display = 'none';
+  charts.sess.clear();
+  setTopView('overview');
+  load();
 });
 
 /**
@@ -870,7 +899,12 @@ function bindHeatTooltip(host, dayMap, cell) {
 }
 
 function renderHeatmap(byDayAll) {
-  if (!byDayAll?.length) return;
+  if (!byDayAll?.length) {
+    const host = document.getElementById('ch-heat');
+    host.__heatData = new Map();
+    return markEmpty('heat');
+  }
+  clearEmpty('heat');
   // GitHub 惯例：固定显示近一年；custom series 精确绘制，栅格间距横竖严格一致
   const host = document.getElementById('ch-heat');
   const today = new Date();
@@ -975,9 +1009,10 @@ function renderFeed(recent) {
     return;
   }
   host.innerHTML = `<table>
-    <thead><tr><th>时间</th><th>工具</th><th>模型</th><th>项目</th><th class="num">输入</th><th class="num">缓存读</th><th class="num">输出</th></tr></thead>
+    <thead><tr><th>时间</th><th>设备</th><th>工具</th><th>模型</th><th>项目</th><th class="num">输入</th><th class="num">缓存读</th><th class="num">输出</th></tr></thead>
     <tbody>${recent.map(e => `<tr>
       <td class="dim">${hhmm(e.ts)}</td>
+      <td class="dim">${esc(lastSummary.devices?.find(d => d.id === e.device)?.label || '未归属')}</td>
       <td><span class="badge ${esc(e.tool)}">${esc(TOOL_LABEL[e.tool] || e.tool)}</span></td>
       <td>${esc(prettyModel(e.model)) || '<span class="dim">-</span>'}</td>
       <td class="dim">${esc(e.project) || '-'}</td>

@@ -181,6 +181,8 @@ token-watcher extra-roots add claude-code ~/mirror/home-pc/claude/projects
 token-watcher extra-roots remove claude-code ~/mirror/home-pc/claude/projects
 ```
 
+仪表盘顶部支持“全部设备 / Mac / VPS / Windows”筛选，图表、会话与CSV遵循相同设备范围；选择设备时仍保留全部设备累计总量。账户配额、余额和订阅ROI为共享信息。来源识别与历史兼容见[设备筛选说明](docs/DEVICE-FILTER.md)。
+
 任何能把文件送到本机的传输都行，按机器条件选：
 
 | 传输方式 | jsonl 源（Claude Code、Codex、Grok…） | sqlite 源（ZCode、OpenCode） |

@@ -147,6 +147,8 @@ async function dashboardCases(ok) {
   });
   const chart = { titles: [], cleared: 0, resize() {}, setOption(o) { this.titles.push(o?.title?.text); }, clear() { this.cleared++; } };
   const context = vm.createContext({
+    device: 'all', sessionsRequest: 0,
+    usageUrl: (await import('../web/lib/devices.js')).usageUrl,
     document: { getElementById: el },
     fetch: async (u) => {
       requests.push(u);
@@ -175,7 +177,7 @@ async function dashboardCases(ok) {
     if (noSid(s)) continue;
     requests.length = 0;
     await click(rows[i]);
-    const want = `/api/session/${encodeURIComponent(s.session_id)}?tool=${encodeURIComponent(s.tool)}`;
+    const want = `/api/session/${encodeURIComponent(s.session_id)}?tool=${encodeURIComponent(s.tool)}&device=all`;
     ok(`点击 ${s.tool} 行只请求该 (tool, 会话)`, requests.length === 1 && requests[0] === want, `${JSON.stringify(requests)} ≠ ${want}`);
     ok(`${s.tool} 行可点击（指针）`, rows[i]?.style.cursor === 'pointer', JSON.stringify(rows[i]?.style));
   }
