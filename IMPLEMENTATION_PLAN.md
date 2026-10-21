@@ -435,7 +435,11 @@ P2 已知限制随发布说明披露，不在本轮扩展重构；不重启用�
 1. [x] 备份全部 28 个本地改动文件与二进制补丁，核对最新 main，建立独立候选。
 2. [x] 逐项解决三方冲突，整合设备筛选、Windows 元数据同步与视频脚本，复核公开文档及打包范围。
 3. [x] Node 22/24 完整回归、专项测试、语法/格式检查、universal 打包和干净安装验证。
-4. [ ] 提交推送并核对完整 CI，固定 1.9.6 标签、草稿及产物校验值。
-5. [ ] OIDC 发布并核对 npm/GitHub、来源证明、签名和 Homebrew；同步本地 checkout。
+4. [x] 提交推送并核对完整 CI，固定 1.9.6 标签、草稿及产物校验值。
+5. [x] OIDC 发布并核对 npm/GitHub、来源证明、签名和 Homebrew；同步本地 checkout。
 
 1.9.6 本地验收：Node 22.13.1 / 24.14.0 分别通过 979 / 983 项主回归检查及 Windows 专项；85 个包文件与候选逐字节一致，菜单栏含 arm64/x86_64，干净 consumer 安装的 14 项检查与五种设备范围通过。设备缓存按连接和设备隔离，健康检查与汇总共用时间边界。测试仅使用隔离合成数据。
+
+发布完成：版本提交 1dee585，v1.9.6 标签固定该提交；[主线 CI 39527201337](https://github.com/luwill/token-watcher/actions/runs/39527201337) 的 10 项任务成功。[草稿运行 39527482797](https://github.com/luwill/token-watcher/actions/runs/39527482797) 与[正式 OIDC 发布 39527686709](https://github.com/luwill/token-watcher/actions/runs/39527686709) 通过；npm version/latest=1.9.6，[GitHub Release](https://github.com/luwill/token-watcher/releases/tag/v1.9.6) 已公开。
+
+本地、草稿、正式工作流与 registry 包逐字节一致，SHA-256=a68a594b876e94ece29d4fe38ce2a6fade512840f86a3a8d174d251be4b2f7d1；85 个包文件与版本候选一致。SLSA SHA-512、main、release.yml、版本提交及正式运行绑定已核对，npm audit signatures 的 invalid/missing 均为空。Homebrew tap 公式提交 85a4366 已推送；本地工作树原 28 个文件经备份哈希校验后整合并提交，同步到发布版本时干净。收据保存在批准隔离目录的 release-1.9.6/。正式数据库、现有同步计划和本机运行服务均未操作。
