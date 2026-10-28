@@ -203,7 +203,10 @@ token-watcher extra-roots remove claude-code ~/mirror/home-pc/claude/projects
 
 **Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。
 
-**dsh 源需要系统 `zstd`**（`brew install zstd`）。dsh 的会话快照是追加式多帧写入，
+**dsh 源需要系统 `zstd`**。dsh 的会话快照是追加式多帧写入，必须用外部 zstd CLI 解压：
+- macOS：`brew install zstd`
+- Windows：`scoop install zstd` 或 `choco install zstd`，或从 [facebook/zstd releases](https://github.com/facebook/zstd/releases) 下载 `zstd.exe` 加入 PATH
+- Linux：`apt-get install -y zstd` / `dnf install -y zstd` / `pacman -S zstd`
 单个文件可达数千帧，而 Node 内置的 zstd 只解第一帧就结束且不报错，因此这里以外部
 `zstd` 为准，仅在确认文件只含单帧时才回落内置实现。未安装且遇到多帧文件时，该源会在
 健康自检里报错，而不是静默少算。其余数据源不需要它。
