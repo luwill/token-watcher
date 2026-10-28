@@ -9,7 +9,7 @@
  *     易错点），scan 两次（幂等），断言 DB 黄金数字与 /api/summary 结构
  */
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, rmSync, existsSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, appendFileSync, readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -385,6 +385,7 @@ const HOME = mkdtempSync(join(tmpdir(), 'tokenmeter-test-'));
 const dbFile = join(HOME, '.tokenmeter', 'tokenmeter.db');
 let hasDsh = false; // 系统无 zstd 时 dsh 源整体跳过，相关断言随之放行
 let ATY_GOLD = 0, ATY_FINAL = 0, ATY_U3_ESTIN = 0; // antigravity 黄金数字（估算口径，夹具块内计算）
+let DOUBAO_GOLD = null, DOUBAO_REWRITE = []; // 豆包/豆包工作黄金数字（E2E 夹具块内赋值）
 {
   // ---- fixtures（时间戳用"现在"附近，避免健康检查把过去时间的 fixture 判为 stale）----
   const NOW = Date.now();
@@ -675,6 +676,11 @@ let ATY_GOLD = 0, ATY_FINAL = 0, ATY_U3_ESTIN = 0; // antigravity 黄金数字�
   ]);
   // Qoder 黄金：token 事件 1640 + 15 = 1655 / 2 事件；积分 1.5 + 0.25 = 1.75
 
+  // 豆包/豆包工作：真实 config SOURCES 的 leveldb 树（raw/snappy .ldb + 跨 32KB .log +
+  // .blob 外置值 + ff 11 01 外置干扰 + 无关 leveldb 目录），黄金数字由 fixture 构建器返回
+  const { writeDoubaoE2eFixture } = await import('./doubao-leveldb.mjs');
+  ({ gold: DOUBAO_GOLD, rewriteFiles: DOUBAO_REWRITE } = writeDoubaoE2eFixture(HOME));
+
   // 本地定价（离线可算费用；deepseek/glm 覆盖 fixtures 模型）
   mkdirSync(join(HOME, '.tokenmeter'), { recursive: true });
   writeFileSync(join(HOME, '.tokenmeter', 'pricing.json'), JSON.stringify({
@@ -792,6 +798,34 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
     hs.close();
     rmSync(hHome, { recursive: true, force: true });
   }
+  // 豆包/豆包工作端到端黄金数字（真实 config SOURCES + CLI scan）
+  for (const tool of ['doubao', 'doubaowork']) {
+    const g = DOUBAO_GOLD[tool];
+    ok(`${tool} 4 事件（.ldb×2 + .log×1 + .blob×1，外置/无关目录不入库）`, byTool[tool]?.n === g.n, JSON.stringify(byTool[tool]));
+    ok(`${tool} 总量 68000`, byTool[tool]?.t === g.total, JSON.stringify(byTool[tool]));
+    ok(`${tool} model=doubao-model-38（数字 id）`,
+      q("SELECT DISTINCT model FROM events WHERE tool='" + tool + "'").every(r => r.model === g.model),
+      JSON.stringify(q("SELECT DISTINCT model FROM events WHERE tool='" + tool + "'")));
+    ok(`${tool} output/cached/reasoning 全为 0、project=dashboard`,
+      q("SELECT project, output_tokens, cached_input, reasoning_tokens FROM events WHERE tool='" + tool + "'")
+        .every(r => r.project === 'dashboard' && r.output_tokens === 0 && r.cached_input === 0 && r.reasoning_tokens === 0),
+      JSON.stringify(q("SELECT project, output_tokens, cached_input, reasoning_tokens FROM events WHERE tool='" + tool + "'").slice(0, 1)));
+    const keys = q("SELECT dedup_key FROM events WHERE tool='" + tool + "' ORDER BY dedup_key").map(r => r.dedup_key);
+    ok(`${tool} 去重键=tool:conv:msg`, JSON.stringify(keys) === JSON.stringify([...g.dedup].sort()), JSON.stringify(keys));
+  }
+  // 字节相同重写系列：mtime 改变触发重扫，dedup 必须保持幂等（黄金数字不变）
+  for (const p of DOUBAO_REWRITE) { const buf = readFileSync(p); writeFileSync(p, buf); }
+  const rw = cli(['scan']);
+  ok('字节相同重写后 scan 退出码 0', rw.status === 0, rw.stderr.slice(0, 200));
+  const db2 = new DatabaseSync(dbFile, { readOnly: true });
+  const byTool2 = Object.fromEntries(db2.prepare('SELECT tool, SUM(total_tokens) t, COUNT(*) n FROM events GROUP BY tool').all().map(r => [r.tool, r]));
+  for (const tool of ['doubao', 'doubaowork']) {
+    const g = DOUBAO_GOLD[tool];
+    ok(`${tool} 字节相同重写后幂等（仍 ${g.n} 事件 ${g.total}）`, byTool2[tool]?.n === g.n && byTool2[tool]?.t === g.total,
+      JSON.stringify(byTool2[tool]));
+  }
+  db2.close();
+
   // 订阅 ROI：codex 本月 API 等值 = 唯一计价事件（fresh150/1e6×10 + cached100/1e6×2 + out30/1e6×30 = 0.0026）
   {
     const rj = cli(['roi', '--json']);
@@ -837,7 +871,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('antigravity 非 transcript 的 jsonl 不入文件行',
     q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 3);
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T}`, total === 36850 + ATY_GOLD + DSH_T, String(total));
+  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T + 136000}`, total === 36850 + ATY_GOLD + DSH_T + 136000, String(total));
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
@@ -846,7 +880,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok(`事件总数 ${22 + DSH_N}（幂等）`, n2 === 22 + DSH_N, String(n2));
+  ok(`事件总数 ${22 + DSH_N + 8}（幂等）`, n2 === 22 + DSH_N + 8, String(n2));
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -1053,7 +1087,7 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T && Array.isArray(s.by_day) && s.by_day.length >= 1
+      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T + 136000 && Array.isArray(s.by_day) && s.by_day.length >= 1
       && Array.isArray(s.health) && s.health.length === SOURCES.length && s.costs && Array.isArray(s.costs.by_day)
       && Array.isArray(s.recent) && s.recent.length === Math.min(19 + DSH_N, 15),
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
@@ -2085,4 +2119,3 @@ console.log(failed ? `\n✗ ${failed} 项失败` : '\n✓ 全部通过');
 process.exit(failed ? 1 : 0);
 
 function read(p) { return readFileSync(p, 'utf8'); }
-import { readFileSync } from 'node:fs';

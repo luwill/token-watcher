@@ -407,3 +407,57 @@ export async function testDoubaoLeveldb(ok) {
     }
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 }
+
+/**
+ * 端到端 fixture：在 <home>/Library/Application Support/{Doubao,DoubaoWork}/Default/IndexedDB
+ * 下写出与真实布局一致的 leveldb 树（raw/snappy .ldb、跨 32KB .log、.blob 外置值、
+ * ff 11 01 外置干扰、无关 leveldb 目录）。run.mjs 第 3 层经真实 config SOURCES + CLI scan
+ * 走完整链路后，用返回的黄金数字断言。
+ * 返回 { gold, rewriteFiles }：gold[<tool>] = { n, total, model, projects, dedup }；
+ * rewriteFiles 为字节相同重写系列（改 mtime 触发重扫，dedup 应保持幂等）。
+ */
+export function writeDoubaoE2eFixture(home) {
+  const gold = {};
+  const rewriteFiles = [];
+  const usages = { system_prompt: 4000, messages: 12000, skills: 800, tools: 200, total_window_size: 256000 };
+  for (const [tool, app] of [['doubao', 'Doubao'], ['doubaowork', 'DoubaoWork']]) {
+    const root = join(home, 'Library', 'Application Support', app, 'Default', 'IndexedDB');
+    const ldbDir = join(root, 'chrome_doubao-chat_0.indexeddb.leveldb');
+    mkdirSync(ldbDir, { recursive: true });
+    const mk = (mid, cid, off) => stateTree({ m1: { extra: extra({
+      context_window_usage: JSON.stringify(usages), message_id: mid, conversation_id: cid, create_time_ms: 1.7e12 + off,
+    }) } });
+    const v = (tree) => inlineValue(new Ssv().obj([['t', tree]]));
+    const ev = (tree) => envelopeValue(new Ssv().obj([['t', tree]]));
+    const ldbPath = join(ldbDir, '000001.ldb');
+    writeFileSync(ldbPath, ldbTable([
+      [blockPayload([[Buffer.from('a'), v(mk(`msg-${tool}-ldb1`, `e2e-${tool}-ldb`, 1000))]]), 1],
+      [blockPayload([[Buffer.from('b'), ev(mk(`msg-${tool}-ldb2`, `e2e-${tool}-ldb`, 2000))]]), 0],
+      [blockPayload([[Buffer.from('ext'), externalValue()]]), 0], // ff 11 01 外置干扰
+    ]));
+    // 跨 32KB .log：batch > 32768-7，FIRST 填满块 0，LAST 落块 1；外置干扰值一并写入
+    const walPath = join(ldbDir, '000123.log');
+    const batch = writeBatch([
+      [Buffer.from('wk'), v(mk(`msg-${tool}-wal`, `e2e-${tool}-wal`, 3000))],
+      [Buffer.from('ext'), externalValue()],
+      [Buffer.from('pad'), Buffer.alloc(WAL_BLOCK - 200, 0x61)], // 撑到跨块
+    ]);
+    writeFileSync(walPath, walFile(batch));
+    const blobPath = join(root, 'chrome_doubao-chat_0.indexeddb.blob', '5', '00', '2', '00000001');
+    mkdirSync(dirname(blobPath), { recursive: true });
+    writeFileSync(blobPath, blobValue(new Ssv().obj([['t', mk(`msg-${tool}-blob`, `e2e-${tool}-blob`, 4000)]])));
+    // 无关 leveldb 目录（dirname 不以 .indexeddb.leveldb 结尾）：scanner 必须忽略
+    const otherDir = join(root, 'other-leveldb');
+    mkdirSync(otherDir, { recursive: true });
+    writeFileSync(join(otherDir, '000001.ldb'), Buffer.alloc(64));
+    rewriteFiles.push(ldbPath, walPath, blobPath);
+    gold[tool] = {
+      n: 4, total: 68000,
+      model: 'doubao-model-38',
+      projects: ['dashboard'],
+      dedup: [`${tool}:e2e-${tool}-ldb:msg-${tool}-ldb1`, `${tool}:e2e-${tool}-ldb:msg-${tool}-ldb2`,
+        `${tool}:e2e-${tool}-wal:msg-${tool}-wal`, `${tool}:e2e-${tool}-blob:msg-${tool}-blob`],
+    };
+  }
+  return { gold, rewriteFiles };
+}
