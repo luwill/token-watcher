@@ -10,7 +10,7 @@
 - host: degraded（人类 2026-10-28 批准 env-clean 降级：本机 sandbox-exec 的 localhost 放行规则匹配全部外网地址，deny_network 无法 OS 强制；runner 拒绝后经批准以 env-clean 运行。skill 对限制性 policy 强制升级 sandbox-exec 且探针失败拒绝降级 → policy 实际设为非限制（deny_network=false、deny_paths=[]），红线非强制项见 Not verified）
 - policy: docs/autopilot-policy.json at the pinned commit
 - helper pin: 8843c17e5c28546d10a2fdee99a301bd0c89c7e7f439b501a470e8c771d47f80
-- current: landing
+- current: landing review
 
 ## Goal
 
@@ -33,7 +33,7 @@ Frozen at takeoff. A run changes `status` and `evidence`, never the criterion; a
 | C1 | 前端登记完整：doubao/doubaowork 在 `web/lib/theme.js`（TOOL_COLORS/TOOL_LABEL）、`web/app.js`（LIGHT_TOOL_COLORS）、`web/style.css`（badge 深/浅）、`web/index.html`（footer 数据源清单）登记；新色过 CIEDE2000 全集校验（最差配对不劣于现状）；套件「每个注册数据源都有品牌色与标签」绿 | `gate-s1`；mutant 删 `TOOL_COLORS.doubao` → 断言失败 | proven（gate-s1 绿 @57f5eed；mutant-c1 KILLED；stage1.md 校验记录。注：色盲最差对如实记录为 doubaowork vs ccmr/dsh 4.5–5.9，主题内“不劣于现状”表述已按实测修正） | `gate-s1.md`,`mutant-c1.md`,`stage1.md` |
 | C2 | 单元测试：`test/doubao-leveldb.mjs` 覆盖 v8leveldb（snappy 原始流、raw/snappy 块、WAL 32KB 分片重组、.blob 外置值、畸形输入静默跳过）与 doubaoUsage/doubaoEvents（input 四项和、ts/会话/project、model=doubao-model-<id>、output=0）及 collectDoubaoFile 经 store 真实链路、幂等重扫 | `gate-s2`；mutant 破坏解码/去重细节 → 断言失败 | proven（gate-s2 绿 @7f960b5；mutant-c2-r2 KILLED；review-s2-full approve：0 blocking、2 minor 均 closed 不阻塞） | `gate-s2.md`,`mutant-c2-r2.md`,`review-s2-full-request.json`,`review-s2-full-findings.json` |
 | C3 | 端到端：`test/run.mjs` 合成 leveldb fixture（raw .ldb + snappy 块 + 跨 32KB .log + 字节相同重写系列 + `ff 11 01` 外置干扰 + 无关 leveldb 目录），scan ×2 幂等，黄金数字（事件数、input 和、output=0、model、project、dedup）断言 | `gate-s3`；mutant 改 dedup key → 重复事件被断言捕获 | proven（gate-s3 绿 @bb0815b；mutant-c3 KILLED；review-s3-full approve：0 blocking、2 minor 均 closed 不阻塞） | `gate-s3.md`,`mutant-c3.md`,`review-s3-full-request.json`,`review-s3-full-findings.json` |
-| C4 | 真实数据：临时 HOME + 软链真实 `{Doubao,DoubaoWork}` 目录跑 scan：doubao ≥1 条事件（9 月冻结库）、doubaowork 行健康、doctor 两行正常 | 落地证据（非代码检查，无 mutant） | open | |
+| C4 | 真实数据：临时 HOME + 软链真实 `{Doubao,DoubaoWork}` 目录跑 scan：doubao ≥1 条事件（9 月冻结库）、doubaowork 行健康、doctor 两行正常 | 落地证据（非代码检查，无 mutant） | proven（临时 HOME + 软链真实目录 scan：doubao 21 事件 2.06M、doubaowork 1 事件 104.2K、二次扫描 +0 幂等；doctor 豆包 ok；豆包工作 ⚠ stale 已归因为共享启发式对常驻写入的已知噪音、当前 WAL 核验无未采集 CWU——见 erratum C4 与 P2，人类裁定） | `landing-c4.md` |
 | C5 | 文档：`README.md`/`README.zh-CN.md` 支持表 13→15、`docs/ARCHITECTURE.md` 豆包格式节、`package.json` description/keywords 增豆包 | `gate-s4`（docs 路径豁免阶段对抗评审）+ 落地审计 | proven（gate-s4 绿 @8651856；改动全在 docs 路径/文档元数据，阶段对抗评审按契约豁免并记录，落地审计照常跑） | `gate-s4.md` |
 
 ### Independent mutation targets
@@ -57,6 +57,7 @@ Append only. The human rules on each at landing.
 | id | criterion | what is wrong | evidence | proving instead |
 |---|---|---|---|---|
 | C1 | “最差配对不劣于现状”字面不可达：品牌蓝系 + 不动既有 dsh/ccmr 时，任何新增蓝都会在色盲模拟下与二者之一接近（扫描 17 个候选验证）。最终取 doubao #1d6cff / doubaowork #5c8fd0：常视觉最差对保持原 zcode/cursor（8.89），CVD 最差对 4.50–5.92（≥4.5 可区分），兄弟对 ≥11.4 | `stage1.md`（方法、自检、候选扫描、精确配对表）、theme.js 注释已按实测撰写 | 按实测数值验收（人类在落地时裁定本 erratum） |
+| C4 | “doctor 两行正常”字面不可达（在用 App）：豆包工作 1 事件 104.2K 已正确采集入库，但共享健康启发式把「常驻聊天壳应用的普通写入」（launcher/background/chat 的 WAL 与 blob 持续写）判为 stale——核验当前 WAL/.ldb 无任何未采集的 `context_window_usage` 记录，非格式漂移。冻结侧豆包因文件 mtime 陈旧 → ok | `landing-c4.md`（命令输出、逐条核对、stale 归因、WAL 探针） | 按「行存在、事件>0、无解析错误、doctor 退出码 0」验收（人类裁定；顺带裁定 P2） |
 
 ## Stages
 
@@ -64,7 +65,7 @@ Append only. The human rules on each at landing.
 2. [x] Stage 2 单元测试 — owns C2（test/doubao-leveldb.mjs）→ gate-s2 绿、mutant-c2-r2 KILLED、review-s2-full approve，C2 proven
 3. [x] Stage 3 端到端 fixture — owns C3（test/run.mjs E2E fixture + 全局黄金数字）→ gate-s3 绿、mutant-c3 KILLED、review-s3-full approve，C3 proven
 4. [x] Stage 4 文档 — owns C5（README ×2、ARCHITECTURE、package.json）→ gate-s4 绿；docs 路径豁免阶段对抗评审（记录于本行），落地审计照常跑，C5 proven
-5. [ ] Landing 真实数据验证 — owns C4 + 合并 autopilot/doubao → main
+5. [x] Landing 真实数据验证 — owns C4（临时 HOME + 软链真实目录 scan 验证通过；stale 归因入 erratum）+ 合并 autopilot/doubao → main（人类预授权；待落地审计通过）
 
 ## Ledger
 
@@ -99,6 +100,7 @@ What the run learned the contract should say. The human accepts or rejects each.
 | id | proposal | human ruling |
 |---|---|---|
 | P1 | 本机 sandbox-exec localhost 放行规则匹配全部外网，deny_network 无法 OS 强制；批准 env-clean 降级运行并披露未强制项。因 skill 对限制性 policy 强制升级 sandbox-exec 且探针失败拒绝降级，policy 最终设为非限制（deny_network=false、deny_paths=[]），红线保留在契约/记录 | accepted 2026-10-28 |
+| P2 | 豆包/豆包工作源 root 收窄到 `chrome_*-chat_0.indexeddb.leveldb` + 同名 blob（排除 launcher/background 常驻写入 → stale 噪音消除），或把 leveldb 源 stale 触发改为「目录有写且含可识别 CWU」 | 待人类裁定（与 C4 erratum 同批） |
 
 ### Not verified
 
