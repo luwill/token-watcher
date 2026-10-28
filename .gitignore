@@ -11,6 +11,9 @@ bin/token-watcher.app/
 learnings/
 .maintenance-state/
 
+# ZCode 会话计划，不入库
+.zcode/
+
 # npm pack 产物
 *.tgz
 
