@@ -15,6 +15,7 @@ import { collectOpencodeDb } from './collectors/opencode.js';
 import { collectAntigravityFile } from './collectors/antigravity.js';
 import { collectKimiFile } from './collectors/kimi.js';
 import { collectQoderFile } from './collectors/qoder.js';
+import { collectDoubaoFile } from './collectors/doubao.js';
 
 const COLLECTORS = {
   claude: async (store, args) => ({ ...(await collectClaudeFile(store, args)), state: { _v: args.version } }),
@@ -28,6 +29,7 @@ const COLLECTORS = {
   antigravity: collectAntigravityFile, // 自带 state：上下文累计 + 模型 + 待补正事件
   kimi: collectKimiFile,         // 自带 state：config.update 的模型别名
   qoder: async (store, args) => ({ ...(await collectQoderFile(store, args)), state: { _v: args.version } }),
+  doubao: async (store, args) => ({ ...(await collectDoubaoFile(store, args)), state: { _v: args.version } }), // 快照式：每个 leveldb 文件整体重解析
 };
 
 /**
@@ -62,6 +64,18 @@ async function* enumerate(source) {
       for await (const p of walkByExt(root, (n) => n.endsWith('.zst') || n.endsWith('.zstd'))) {
         yield [p, basename(dirname(p))]; // session.jsonl.zstd 全同名，以父目录为会话键
       }
+    }
+    return;
+  }
+  if (source.kind === 'leveldb') {
+    // Chromium IndexedDB：只认 *.indexeddb.leveldb/ 里的表与 WAL（跳过 MANIFEST/CURRENT/LOCK/LOG）
+    // 和 *.indexeddb.blob/ 下的外置值（有 5/00/2 式层级子目录，文件无后缀）。同一 root 下
+    // Local Storage 等别的 leveldb 不碰。
+    const match = (n, p) => dirname(p).endsWith('.indexeddb.leveldb')
+      ? /\.(ldb|sst)$/.test(n) || /^\d{6}\.log$/.test(n)
+      : /\.indexeddb\.blob[\\/]/.test(p);
+    for (const root of source.roots) {
+      for await (const p of walkByExt(root, match, source.descend)) yield [p, null];
     }
     return;
   }

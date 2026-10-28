@@ -12,6 +12,9 @@ export const HOME = homedir();
  * kind: jsonl  —— 递归扫描 *.jsonl（transcript 流式追加，字节游标增量；可用 match 收窄文件名）
  *       sqlite —— 单个 db 文件（rowid 水位增量，只读并发）
  *       zst    —— 递归扫描 *.zst（原子快照，mtime 变化即整体重解析 + dedup）
+ *       leveldb —— Chromium IndexedDB 目录（*.indexeddb.leveldb 下的 .ldb 表 / .log WAL 与
+ *                  *.indexeddb.blob 下的外置值；每个文件视为快照，size/mtime 变化即整文件
+ *                  重解析 + dedup；解码见 src/v8leveldb.js）
  *       poller —— 非文件源（账号级 API 轮询，见 src/cursorUsage.js）：无 roots，仅为
  *                  健康表/前端登记工具名；事件由 poller 直接入库
  * version: 采集器逻辑版本；files.state_json._v 落后时会自动全量重扫补数据（dedup 幂等）。
@@ -161,6 +164,29 @@ export const SOURCES = [
     roots: [join(HOME, '.qoder', 'projects'), join(HOME, '.qoder-cn', 'projects')],
     kind: 'jsonl',
     collector: 'qoder',
+    version: 1,
+    subscription: true,
+  },
+  {
+    tool: 'doubao',
+    label: '豆包',
+    // Chromium 壳应用：用量在 Default/IndexedDB/chrome_doubao-chat_0.indexeddb.leveldb（及同名 .blob）。
+    // root 收到 IndexedDB 一层，别让 App 自己持续写的日志目录触发 FSEvents 重扫。
+    // 只登 macOS 路径：Windows 下的 %LOCALAPPDATA% 位置未实测，不猜。
+    roots: [join(HOME, 'Library', 'Application Support', 'Doubao', 'Default', 'IndexedDB')],
+    kind: 'leveldb',
+    collector: 'doubao',
+    version: 1,
+    subscription: true,
+  },
+  {
+    tool: 'doubaowork',
+    label: '豆包工作',
+    // 与豆包同格式的工作版（独立 App，独立数据目录）；任务状态记录只在任务进行中存在，
+    // 靠常驻扫描在 compaction 前从 WAL 抓取——见 src/collectors/doubao.js
+    roots: [join(HOME, 'Library', 'Application Support', 'DoubaoWork', 'Default', 'IndexedDB')],
+    kind: 'leveldb',
+    collector: 'doubao',
     version: 1,
     subscription: true,
   },

@@ -10,6 +10,9 @@ export const TOOL_COLORS = {
   'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
   'pi': '#2dd4bf', 'opencode': '#ff8c42',
   'antigravity': '#6d6875', 'kimi': '#95d5b2', 'qoder': '#9c6644', 'cursor': '#f2cc8f',
+  // doubao/doubaowork：豆包品牌蓝系；选色先按 CIEDE2000（含色盲模拟）全集最差配对复核，
+  // 见 docs/evidence/stage1 的记录（最差配对不劣于现状 ccmr/dsh）。
+  'doubao': '#1d6cff', 'doubaowork': '#5b9bff',
 };
 
 export const TOOL_LABEL = {
@@ -17,6 +20,7 @@ export const TOOL_LABEL = {
   'zcode': 'ZCode', 'dsh': 'dsh', 'workbuddy': 'WorkBuddy', 'grok': 'Grok',
   'pi': 'Pi', 'opencode': 'OpenCode',
   'antigravity': 'Antigravity', 'kimi': 'Kimi Code', 'qoder': 'Qoder', 'cursor': 'Cursor',
+  'doubao': '豆包', 'doubaowork': '豆包工作',
 };
 
 // 深色底 #14141c 上经 validate_palette.js 校验的 8 槽分类色板：
