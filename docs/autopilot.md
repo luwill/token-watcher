@@ -38,18 +38,18 @@ Gate settings：
 - `GATE_ENV`: 空（run.mjs 自行设置 TOKENMETER_OFFLINE/TOKENMETER_NO_KEYCHAIN 与临时基目录）
 - `GATE_SETUP` / `MUTANT_SETUP`: 无（node_modules 由 policy `share_dirs` 只读链接进 worktree）
 - `REDACT_REGEX`: 无
-- `GATE_SANDBOX`: 按 policy（`deny_network` + `deny_paths` → 自动选 sandbox-exec）
+- `GATE_SANDBOX`: 按 policy（env-clean 模式；macOS 下仍经 sandbox-exec + permissive profile，source 写保护由 profile deny 执行，网络/路径红线不强制）
 - `MUTANT_FAILURE_REGEX` / `MUTANT_FAILURE_EXIT`: 每条目标断言单独冻结（例：`✗ 每个注册数据源都有品牌色与标签.*缺登记: doubao` / exit 1），缺失或错配不得判 KILLED
 - `GATE_RERUN_POLICY=safe`（套件用临时目录与随机端口，可安全重跑）
 - 工具链：node/npm/python3 位于 sandbox_runtime base（见 policy `read_paths`）；git/perl/jq 系统自带
 
-Host setup：不允许修改本机（不跑 `host-doctor.sh --fix`）；policy 不设 `"fallback": "env-clean"`（sandbox-exec 可用，strict 按写定执行）。
+Host setup：不允许修改本机（不跑 `host-doctor.sh --fix`）。**契约修正（人类 2026-10-28 批准）**：本机 macOS 的 sandbox-exec 有缺陷——`(allow network* (remote ip "localhost:*"))` 会匹配任意外部地址，`allow_loopback` 等效放行全部网络，`deny_network` 无法 OS 级强制；runner 预检按设计拒绝（exit 77）。人类批准 policy 增 `"fallback": "env-clean"`：门禁以 env-clean 模式运行（source 写保护仍由 permissive profile 的 deny 规则执行；网络红线降为死代理变量、deny_paths 不再 OS 强制），证据与运行记录显式披露未强制项。
 
 ## Execution policy (required companion file)
 
 `docs/autopilot-policy.json` 随本契约一并提交：
 
-- `sandbox: env-clean` + `deny_network: true` + `deny_paths`（两个真实豆包目录）→ runner 自动升级 sandbox-exec 严格模式（离线、只读源码、真实豆包目录读被拒）
+- `sandbox: env-clean` + `deny_network: true` + `deny_paths`（两个真实豆包目录）+ `"fallback": "env-clean"`（人类 2026-10-28 批准，见 Host setup）→ runner 以 env-clean 模式运行（source 写保护仍由 profile deny 规则执行；网络与路径红线 NOT OS-ENFORCED，证据披露）
 - `allow_loopback: true`：测试在 localhost 起临时 HTTP 服务
 - `read_paths`: sandbox_runtime base（node/npm/python3 所在），扩展现有系统运行时可读白名单
 - `share_dirs: ["node_modules"]`：已装依赖，从 checkout 只读链接进每个 worktree
