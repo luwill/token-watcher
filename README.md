@@ -44,13 +44,13 @@ can see when the estimate drifts.
 | Interface | Local web dashboard + menu bar | Native apps + web | CLI reports | TUI / CLI |
 | Refresh | Real-time (FSEvents + SSE, <1s) | Hook-triggered sync | Manual run | Manual run |
 | Granularity | Per-request events | 30-min buckets | Daily | Daily |
-| Sources | 13, incl. China stack (ccmr, dsh, Qoder, Kimi Code, WorkBuddy) | 39 | Multi-agent | Multi-agent |
+| Sources | 15, incl. China stack (ccmr, dsh, Qoder, Kimi Code, WorkBuddy, Doubao) | 39 | Multi-agent | Multi-agent |
 | Cost | LiteLLM prices + **balance reconciliation** + credits ledger | LiteLLM estimate | Estimate | Estimate |
 | Official quotas | Claude / Codex direct-read, Cursor billing CSV | 17 providers | Limited | Several |
 | Telemetry | Optional, opt-in aggregate leaderboard | Opt-out | None | None |
 | Install | One zero-dependency npm package (incl. universal menu-bar app) | npm + platform packages | npm | npm |
 
-## Supported tools (13 sources)
+## Supported tools (15 sources)
 
 | Tool | Data location | What you get |
 |---|---|---|
@@ -66,6 +66,8 @@ can see when the estimate drifts.
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | Real per-step input/cache/output when available; full-context and character estimates for older logs |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | Per-turn details (3 usage shapes auto-detected) |
 | Qoder | `~/.qoder{,-cn}/projects/**` | **Credits ledger** (upstream reports credits, not tokens, locally) |
+| Doubao (豆包) | `~/Library/Application Support/Doubao/Default/IndexedDB` (Chromium LevelDB) | Per-task input tokens from `context_window_usage`, chat-scoped dedup, model `doubao-model-<id>` |
+| Doubao Work (豆包工作) | `~/Library/Application Support/DoubaoWork/Default/IndexedDB` (Chromium LevelDB) | Same LevelDB collector; task records are deleted after finish, so resident WAL scanning is required |
 | Cursor | Account-level usage CSV | Per-request details — Cursor stores nothing per-request locally, so this polls the official export with local credentials |
 
 **Claude Desktop coverage (1.9.4):** local Cowork's verified `agent/local_ditto_*` transcripts and audit logs count under Claude Code. Standard transcripts take priority; both formats and mirrors share message identity. macOS, Windows roaming and installed Claude MSIX roots are discovered; Windows drive/UNC extra roots are supported. Local Code sessions count in configured roots. Chat and cloud sessions without local mirrored transcripts still have no collector; result summaries are not added to per-message usage. See [coverage, tests and upgrade behavior](docs/CLAUDE-DESKTOP-AUDIT-2026-10-14.md).

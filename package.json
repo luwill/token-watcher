@@ -1,7 +1,7 @@
 {
   "name": "token-watcher",
   "version": "1.9.6",
-  "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build, Pi, OpenCode, Antigravity, Kimi Code, Qoder, Cursor)",
+  "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build, Pi, OpenCode, Antigravity, Kimi Code, Qoder, Doubao, Doubao Work, Cursor)",
   "keywords": [
     "token",
     "usage",
@@ -14,7 +14,9 @@
     "codex",
     "observability",
     "cli",
-    "macos"
+    "macos",
+    "doubao",
+    "token-watcher"
   ],
   "homepage": "https://github.com/luwill/token-watcher#readme",
   "bugs": {

@@ -8,7 +8,7 @@
 
 > 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
-## 支持的工具（13 源）
+## 支持的工具（15 源）
 
 | 工具 | 数据位置 | 能看到什么 |
 |---|---|---|
@@ -24,11 +24,13 @@
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | 新版逐轮真实输入/缓存/输出；旧日志按完整上下文和字符估算 |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | 逐轮明细（step.end 用量，camelCase/Anthropic/OpenAI 兼容三形状自适应） |
 | Qoder | `~/.qoder{,-cn}/projects/**/*.jsonl` | **积分账本**（上游本地不报 token，只报 credits）；若上游恢复上报 token 则自动入事件 |
+| Doubao（豆包） | `~/Library/Application Support/Doubao/Default/IndexedDB`（Chromium LevelDB） | 每任务快照的 `context_window_usage` 输入 token 四项和；按会话+消息去重；模型为数字 id → `doubao-model-<id>` |
+| Doubao Work（豆包工作） | `~/Library/Application Support/DoubaoWork/Default/IndexedDB`（Chromium LevelDB） | 同一 LevelDB 采集器；任务记录结束后即删，靠常驻扫描在 WAL 中抓取 |
 | Cursor | 账号级用量账单（CSV） | 逐请求明细（缓存三段分项）——本地无逐请求数据，用本地凭证拉官方导出 |
 
 **Claude Desktop 覆盖范围（1.9.4）**：已验证的本地 Cowork `agent/local_ditto_*` transcript 与 audit 日志并入 Claude Code 统计，标准 transcript 优先，两种格式及镜像共用消息身份去重。自动发现 macOS、Windows Roaming 和已安装 Claude MSIX 的目录；扩展目录支持 Windows 盘符与 UNC。本地 Code 仍要求日志落在配置目录。普通 Chat、未镜像的云端会话尚无明细采集源，result 汇总也不与逐消息用量叠加。验证与升级行为见 [Claude Desktop 调查与修复](docs/CLAUDE-DESKTOP-AUDIT-2026-10-14.md)。
 
-本项目尚未提供网页版聊天（ChatGPT/豆包/DeepSeek 网页等）的 token 明细采集；不能用对话文本长度或配额百分比代替真实用量。
+本项目尚未提供网页版聊天（ChatGPT/DeepSeek 网页等）的 token 明细采集；不能用对话文本长度或配额百分比代替真实用量。豆包与豆包工作的桌面客户端明细走本地 Chromium LevelDB 采集（见上表），网页版仍不覆盖。
 
 > **口径说明**：Kimi Code / Qoder / Antigravity 均在本机真实数据上与独立重算逐条核对一致。
 > **Qoder 实测本地只报积分不报 token**（2026-09，qmodel_38max）：积分走独立账本出

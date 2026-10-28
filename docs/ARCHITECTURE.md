@@ -194,6 +194,32 @@ agentKv blob 无用量字段。唯一权威来源是官方导出
   被修正数值的旧行会残留（新指纹另插）——已知边界，若 Cursor 未来提供行 id 再换。
 本机 546 行与 CSV 独立重算完全一致，重拉幂等。
 
+### Doubao / Doubao Work（Chromium LevelDB，本机实测 2026-10）
+`~/Library/Application Support/Doubao/Default/IndexedDB/chrome_doubao-chat_0.indexeddb.leveldb/`
+（Doubao Work 同名目录在 `…/DoubaoWork/…`；`.indexeddb.blob/` 存外置大值）。
+采集器 `src/collectors/doubao.js` + 解码器 `src/v8leveldb.js`：
+- **表格式**：.ldb 文件尾 48B footer，magic `57fb808b247547db`；数据块 = 载荷（含
+  restart 数组）+ 1B type（0=snappy 压缩、1=raw）+ 4B CRC32，handle 尺寸不含 5B 尾。
+  值可为 V8 structured-clone 内联（`ff 0f` 前缀）、Blink 信封（`ff 12 fe` + 12B trailer）、
+  值级 snappy（`ff 11 02`，须先解压再快筛 `context_window_usage`）、外置（`ff 11 01` 无负载，
+  快筛直接跳过）、.blob 文件（无版本前缀的包装值）；
+- **WAL**：`00000N.log`，32768B 块、记录头 crc(4)+len(2)+type(1)，
+  FULL/FIRST/MIDDLE/LAST（type 0 块尾停），跨块 batch 重组；write batch = seq(8)+count(4)+
+  type(1)+key/value varint…；
+- **用量口径**：每任务快照 1 事件，input = `context_window_usage` 的
+  system_prompt+messages+skills+tools 四项和（有 `total_tokens`/`used_tokens` 键时显式优先，
+  `total_window_size` 容量不计）；output/cached/cache_write/reasoning 恒 0；model 数字 id →
+  `doubao-model-<id>`，非数字走 normalizeModel（不配价）；
+- **时间/会话/项目**：ts 毫秒取 create_time_ms/create_time/createTime/
+  update_time_ms/querySendTimestamp 任一（须落在 [2023-01-01, now+1d]）；session_id =
+  conversation_id（fallback identity）；project = workspace/agent_workspace/shared_folder_path/
+  folder/cwd 绝对路径 basename（含 `*_task_param` JSON 字符串内解析）；
+- **dedup_key = `<tool>:<conversation??'-'>:<identity>`**（identity = message_id/
+  local_message_id/uniqueId 或 cwuText sha1 前 16 hex）——同会话多消息可并存，重扫幂等；
+- **豆包工作任务结束即删记录** → 靠常驻扫描从 WAL 抓取；豆包 9 月冻结库一次性导入。
+本机 C2 单元测试 + C3 端到端 fixture（合成真实格式 .ldb/.log/.blob）已锁格式；
+C4 落地以真实设备库逐条核对。
+
 ### Claude 官方配额（1.5.0 新增；2026-09 适配接口改版）
 凭证：macOS 登录钥匙串（service `Claude Code-credentials`）/ Linux·Windows 的
 `~/.claude/.credentials.json`，payload 形如 `{claudeAiOauth:{accessToken,...}}`。
