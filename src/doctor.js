@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { SOURCES, DB_PATH, DATA_DIR, EXTRA_ROOTS, isOffline } from './config.js';
 import { isUnderRoot } from './scanner.js';
+import { zstdInstallHint } from './zstd.js';
 import { computeHealth } from './server.js';
 import { zcodeQuotaTargets } from './zcodeQuota.js';
 import { readClaudeOauthToken } from './claudeUsage.js';
@@ -34,7 +35,7 @@ export async function runDoctor(store, scannerStats, { log = console.log } = {})
       try { execFileSync('zstd', ['--version'], { stdio: 'ignore', timeout: 3000 }); return true; }
       catch { return false; }
     })();
-    log(`  ${zstd ? '✓' : '⚠'} 系统 zstd（dsh 多帧会话必需）：${zstd ? '可用' : '未找到，brew install zstd'}`);
+    log(`  ${zstd ? '✓' : '⚠'} 系统 zstd（dsh 多帧会话必需）：${zstd ? '可用' : '未找到，' + zstdInstallHint()}`);
   }
 
   log('数据库');
