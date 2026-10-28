@@ -1,0 +1,31 @@
+{
+ "verdict": "approve",
+ "summary": "独立检视 a1fa849..dac6444 的 stage-1 变更（web/lib/theme.js、web/app.js、web/style.css、web/index.html）与 docs/evidence/stage1.md 校验记录。C1 五处登记齐全且相互一致；深/浅色取值、对比度、CIEDE2000+CVD 最差对与证据文件逐项吻合；npm test 覆盖的 theme 断言由 mutant-c1 证明可失效（KILLED）。未发现阻塞问题。两条 minor 观察不影响本阶段验收。",
+ "limits": "snapshot-only; no command reproduction; no OS sandbox; reviewer: same model family as the author (local, no cloud dispatch, no codex CLI — disclosed); supplied: git diff a1fa849..dac6444 for web/ (code diff), changed files in full, docs/autopilot.md, docs/autopilot-policy.json, docs/runs/run.md, evidence gate-base.md, premise-p1-mutant.md, stage1.md, gate-s1.md, mutant-c1.md (MANIFEST-verified). Omitted: none for stage 1 scope. Read-only inspection only (git show/log/diff, verify-evidence.sh); no execution, no browsing, no filesystem mutation, no network.",
+ "findings": [
+  {
+   "confidence": 0.85,
+   "file": "web/lib/theme.js",
+   "how_to_confirm": "对照 docs/evidence/stage1.md 的精确配对表：deutan 4.50 是 dsh #4ea8de/doubaowork #5c8fd0 对，而 ccmr #8b7cf6/doubaowork 对是 4.53；protan 5.92 是 ccmr/doubaowork 对。可将注释改为逐对写明。",
+   "line_end": 14,
+   "line_start": 13,
+   "recommendation": "把注释里的数字与配对写精确（protan 5.92 = ccmr/doubaowork；deutan 4.50 = dsh/doubaowork），避免读者把 4.50 误挂到 ccmr 对。非阻塞。",
+   "severity": "minor",
+   "title": "theme.js 注释对最差对的归属可读性欠精确",
+   "what_goes_wrong": "注释写为“色盲模拟最差对为 doubaowork vs ccmr/dsh（protan 5.92 / deutan 4.50）”，两对合写但数字分别对应不同第二成员；数值本身与证据一致，仅表述会让维护者误读配对。",
+   "why_vulnerable": "配色注释是未来换色的唯一指引；配对数字若被误挂，后续选色可能基于错误基线。"
+  },
+  {
+   "confidence": 0.9,
+   "file": "docs/evidence/stage1.md",
+   "how_to_confirm": "查看 test/run.mjs:270 的 theme 断言仅覆盖 TOOL_COLORS + TOOL_LABEL；app.js LIGHT_TOOL_COLORS 与 style.css badge 深/浅没有自动化检测器，删除不会被 npm test 捕获。",
+   "line_end": 62,
+   "line_start": 57,
+   "recommendation": "接受现状并保留 stage1.md 的记录约束（已写明“同步由本证据记录约束”），或在后续为浅色/徽章补一个静态断言；不阻塞本阶段。",
+   "severity": "minor",
+   "title": "浅色配色与徽章登记仅靠证据约束，无自动化检测",
+   "what_goes_wrong": "若未来有人删除 LIGHT_TOOL_COLORS.doubao 或对应 badge 规则，套件仍绿；当前靠注释互相指向 + 本证据记录来约束。这与既有 13 个工具的现状一致，非本次引入的回归。",
+   "why_vulnerable": "前端登记完整性依赖人工同步；属于可接受的既有模式，但值得记录。"
+  }
+ ]
+}
