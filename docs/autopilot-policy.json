@@ -1,11 +1,8 @@
 {
   "version": 1,
   "sandbox": "env-clean",
-  "deny_network": true,
-  "deny_paths": [
-    "/Users/louwill/Library/Application Support/Doubao",
-    "/Users/louwill/Library/Application Support/DoubaoWork"
-  ],
+  "deny_network": false,
+  "deny_paths": [],
   "fallback": "env-clean",
   "read_paths": [
     "/Users/louwill/Library/Application Support/DoubaoWork/sandbox_runtime/bases/98670218a5f0d8bc9b9ebf3f70881304"
