@@ -1,0 +1,31 @@
+{
+  "verdict": "approve",
+  "summary": "Targets-only request for stage 3 (scope: mutant targets and detector weaknesses). This review does not judge the stage code; it specifies the adversary-selected concrete mutation targets for criterion C3 before the mutant wave. The run must record which target the actual mutant implements. Contract C3 variant: dedup 失效导致重复事件 → 重复事件被断言捕获。",
+  "limits": "snapshot-only; no command reproduction; no OS sandbox; reviewer: same model family as the author (local, no codex CLI, no cloud)",
+  "findings": [
+    {
+      "title": "C3 mutant target: dedup_key 丢失 identity（端到端重复事件）",
+      "confidence": 0.9,
+      "severity": "minor",
+      "file": "src/collectors/doubao.js",
+      "line_start": 183,
+      "line_end": 183,
+      "why_vulnerable": "端到端 fixture 里 doubao/doubaowork 各有两条事件共用同一 conversation（e2e-*-ldb，msg-ldb1/msg-ldb2）；dedup_key 去掉 identity 后这两条互相去重，事件总数与全源合计直接缩水——事件总数 32→30、全源合计 382686→348686、各源 4 事件 68000 断言全红。",
+      "what_goes_wrong": "把 dedup_key 改成 `${tool}:${conversation ?? '-'}`：scan×2 幂等断言、`doubao 4 事件`、`总量 68000`、`去重键=tool:conv:msg`、`事件总数 32`、`全源合计`、summary all_time 全部 ✗。",
+      "how_to_confirm": "改该行后运行 npm test：第 3 层 doubao/doubaowork 黄金数字断言应出现 ✗（重复事件被断言捕获）。",
+      "recommendation": "mutant 破坏该行并断言失败（KILLED）。"
+    },
+    {
+      "title": "C3 mutant target: insertEvent 去重分支被破坏（重复行仍插入）",
+      "confidence": 0.8,
+      "severity": "minor",
+      "file": "src/store.js",
+      "line_start": 186,
+      "line_end": 202,
+      "why_vulnerable": "insertEvent 靠 _insertEvent.run 的 changes 判定已存在行；若去掉该判定（总是 return 1 且继续插入），WAL/.ldb/.blob 三份副本与字节相同重写系列会把事件重复插入，事件总数与全源合计翻倍式失真。",
+      "what_goes_wrong": "改动 insertEvent 使同 dedup_key 重复插入：第一次 scan 8 条 doubao 事件 ×2 源副本 → 事件总数 32→40+、全源合计变大，`事件总数 32（幂等）` 断言 ✗。",
+      "how_to_confirm": "破坏 insertEvent 的去重判定后运行 npm test：第 3 层事件总数/全源合计断言应 ✗。",
+      "recommendation": "备用目标；与目标 1 任选其一实现（契约 C3 文案为 dedup 失效，目标 1 最贴合）。"
+    }
+  ]
+}
