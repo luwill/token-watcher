@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "sandbox": "env-clean",
+  "deny_network": true,
+  "deny_paths": [
+    "/Users/louwill/Library/Application Support/Doubao",
+    "/Users/louwill/Library/Application Support/DoubaoWork"
+  ],
+  "read_paths": [
+    "/Users/louwill/Library/Application Support/DoubaoWork/sandbox_runtime/bases/98670218a5f0d8bc9b9ebf3f70881304"
+  ],
+  "env": [],
+  "write_dirs": [],
+  "record_paths": {
+    "evidence_dir": "docs/evidence",
+    "run_record": "docs/runs/run.md"
+  },
+  "share_dirs": [
+    "node_modules"
+  ],
+  "allow_loopback": true
+}
