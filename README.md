@@ -66,8 +66,8 @@ can see when the estimate drifts.
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | Real per-step input/cache/output when available; full-context and character estimates for older logs |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | Per-turn details (3 usage shapes auto-detected) |
 | Qoder | `~/.qoder{,-cn}/projects/**` | **Credits ledger** (upstream reports credits, not tokens, locally) |
-| Doubao (豆包) | `~/Library/Application Support/Doubao/Default/IndexedDB` (Chromium LevelDB) | Per-task input tokens from `context_window_usage`, chat-scoped dedup, model `doubao-model-<id>` |
-| Doubao Work (豆包工作) | `~/Library/Application Support/DoubaoWork/Default/IndexedDB` (Chromium LevelDB) | Same LevelDB collector; task records are deleted after finish, so resident WAL scanning is required |
+| Doubao (豆包) | `~/Library/Application Support/Doubao/*/IndexedDB` (Chromium LevelDB, every profile) | Input tokens from `context_window_usage`: one event per distinct context tuple of a reply (each tuple = one model request); model `doubao-model-<id>` |
+| Doubao Work (豆包工作) | `~/Library/Application Support/DoubaoWork/*/IndexedDB` (Chromium LevelDB, every profile) | Same LevelDB collector; task records are deleted after finish, so resident WAL scanning is required |
 | Cursor | Account-level usage CSV | Per-request details — Cursor stores nothing per-request locally, so this polls the official export with local credentials |
 
 **Claude Desktop coverage (1.9.4):** local Cowork's verified `agent/local_ditto_*` transcripts and audit logs count under Claude Code. Standard transcripts take priority; both formats and mirrors share message identity. macOS, Windows roaming and installed Claude MSIX roots are discovered; Windows drive/UNC extra roots are supported. Local Code sessions count in configured roots. Chat and cloud sessions without local mirrored transcripts still have no collector; result summaries are not added to per-message usage. See [coverage, tests and upgrade behavior](docs/CLAUDE-DESKTOP-AUDIT-2026-10-14.md).

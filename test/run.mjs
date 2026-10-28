@@ -801,8 +801,8 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   // 豆包/豆包工作端到端黄金数字（真实 config SOURCES + CLI scan）
   for (const tool of ['doubao', 'doubaowork']) {
     const g = DOUBAO_GOLD[tool];
-    ok(`${tool} 4 事件（.ldb×2 + .log×1 + .blob×1，外置/无关目录不入库）`, byTool[tool]?.n === g.n, JSON.stringify(byTool[tool]));
-    ok(`${tool} 总量 68000`, byTool[tool]?.t === g.total, JSON.stringify(byTool[tool]));
+    ok(`${tool} 5 事件（Default: .ldb×2 + .log×1 + .blob×1；Profile 2: .ldb×1；外置/无关目录/App 日志不入库）`, byTool[tool]?.n === g.n, JSON.stringify(byTool[tool]));
+    ok(`${tool} 总量 85000`, byTool[tool]?.t === g.total, JSON.stringify(byTool[tool]));
     ok(`${tool} model=doubao-model-38（数字 id）`,
       q("SELECT DISTINCT model FROM events WHERE tool='" + tool + "'").every(r => r.model === g.model),
       JSON.stringify(q("SELECT DISTINCT model FROM events WHERE tool='" + tool + "'")));
@@ -811,7 +811,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
         .every(r => r.project === 'dashboard' && r.output_tokens === 0 && r.cached_input === 0 && r.reasoning_tokens === 0),
       JSON.stringify(q("SELECT project, output_tokens, cached_input, reasoning_tokens FROM events WHERE tool='" + tool + "'").slice(0, 1)));
     const keys = q("SELECT dedup_key FROM events WHERE tool='" + tool + "' ORDER BY dedup_key").map(r => r.dedup_key);
-    ok(`${tool} 去重键=tool:conv:msg`, JSON.stringify(keys) === JSON.stringify([...g.dedup].sort()), JSON.stringify(keys));
+    ok(`${tool} 去重键=tool:conv:msg:cwu摘要`, JSON.stringify(keys) === JSON.stringify([...g.dedup].sort()), JSON.stringify(keys));
   }
   // 字节相同重写系列：mtime 改变触发重扫，dedup 必须保持幂等（黄金数字不变）
   for (const p of DOUBAO_REWRITE) { const buf = readFileSync(p); writeFileSync(p, buf); }
@@ -871,7 +871,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('antigravity 非 transcript 的 jsonl 不入文件行',
     q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 3);
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T + 136000}`, total === 36850 + ATY_GOLD + DSH_T + 136000, String(total));
+  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T + 170000}`, total === 36850 + ATY_GOLD + DSH_T + 170000, String(total)); // 170000 = 豆包/豆包工作各 5 事件 × 17000
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
@@ -880,7 +880,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok(`事件总数 ${22 + DSH_N + 8}（幂等）`, n2 === 22 + DSH_N + 8, String(n2));
+  ok(`事件总数 ${22 + DSH_N + 10}（幂等）`, n2 === 22 + DSH_N + 10, String(n2)); // 10 = 豆包/豆包工作各 5
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -1087,7 +1087,7 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T + 136000 && Array.isArray(s.by_day) && s.by_day.length >= 1
+      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T + 170000 && Array.isArray(s.by_day) && s.by_day.length >= 1
       && Array.isArray(s.health) && s.health.length === SOURCES.length && s.costs && Array.isArray(s.costs.by_day)
       && Array.isArray(s.recent) && s.recent.length === Math.min(19 + DSH_N, 15),
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);

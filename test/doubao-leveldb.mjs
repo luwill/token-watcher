@@ -1,6 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { Store } from '../src/store.js';
 import { Scanner } from '../src/scanner.js';
 import { SOURCES } from '../src/config.js';
@@ -10,6 +11,9 @@ import {
   parseSSV, decodeIndexedDbValue,
 } from '../src/v8leveldb.js';
 import { doubaoUsage, doubaoEvents, doubaoFileKind, collectDoubaoFile } from '../src/collectors/doubao.js';
+
+/** 与采集器同一算法的 cwu 摘要（sha1 前 16 位）：测试据此拼出精确的 v2 去重键 */
+const sha16 = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 /* ---------- 编码器：给 v8leveldb 解码器喂它自己声明的真实格式 ---------- */
 
@@ -171,12 +175,15 @@ const externalValue = () => Buffer.from([0x01, 0xff, 0x11, 0x01]); // 外置：�
 const blobValue = (ssv) => Buffer.concat([Buffer.from([0xff, 0x11, 0x02]), snappyEncode(ssv.build())]); // .blob 文件（无版本前缀）
 
 /** 一条机器人回复的 extra：context_window_usage + 时间/会话/模型/工作目录 */
+const CWU_DEFAULT = JSON.stringify({ system_prompt: 4000, messages: 12000, skills: 800, tools: 200, total_window_size: 256000 });
 const extra = (over = {}) => ({
-  context_window_usage: JSON.stringify({ system_prompt: 4000, messages: 12000, skills: 800, tools: 200, total_window_size: 256000 }),
+  context_window_usage: CWU_DEFAULT,
   create_time_ms: 1.7e12, conversation_id: 'conv-a', message_id: 'msg-1', model_id: '38',
   workspace: '/Users/louwill/proj/dashboard', ...over,
 });
 const stateTree = (msgs) => ({ state: { mainTaskDataMap: { t1: { receivedMessages: msgs } } } });
+/** v2 去重键：tool:conv:msg:cwu 摘要 */
+const dk = (tool, conv, msg, cwu = CWU_DEFAULT) => `${tool}:${conv}:${msg}:${sha16(cwu)}`;
 
 export async function testDoubaoLeveldb(ok) {
   const dir = mkdtempSync(join(tmpdir(), 'doubao-leveldb-'));
@@ -300,11 +307,26 @@ export async function testDoubaoLeveldb(ok) {
       ok('doubaoEvents 字段口径', e.ts === 1.7e12 && e.model === 'doubao-model-38' && e.session_id === 'conv-a'
         && e.project === 'dashboard' && e.input_tokens === 17000 && e.output_tokens === 0 && e.cached_input === 0
         && e.cache_write === 0 && e.reasoning_tokens === 0 && e.total_tokens === 17000);
-      ok('doubaoEvents 去重键', e.dedup_key === 'doubao:conv-a:msg-1');
+      ok('doubaoEvents 去重键 = tool:conv:msg:cwu摘要', e.dedup_key === dk('doubao', 'conv-a', 'msg-1'));
 
       const multi = stateTree({ m1: { extra: extra({ message_id: 'msg-1', create_time_ms: 1.7e12 }) },
         m2: { extra: extra({ message_id: 'msg-2', create_time_ms: 1.7e12 + 5000, conversation_id: 'conv-a' }) } });
       ok('doubaoEvents 一任务多轮多条', doubaoEvents(multi, 'doubao').length === 2);
+
+      // 同一条回复的多个阶段：message_id 相同、cwu 元组不同（tools 200 → 900）→ 各成一条请求事件；
+      // 元组相同的重写（流式分片）→ 同键，落库时去重
+      const CWU_PHASE2 = JSON.stringify({ system_prompt: 4000, messages: 12000, skills: 800, tools: 900, total_window_size: 256000 });
+      const phases = stateTree({
+        m1: { extra: extra({ message_id: 'msg-1' }) },
+        m1b: { extra: extra({ message_id: 'msg-1' }) }, // 字节相同的重写
+        m1c: { extra: extra({ message_id: 'msg-1', context_window_usage: CWU_PHASE2 }) },
+      });
+      const phaseEvs = doubaoEvents(phases, 'doubao');
+      ok('doubaoEvents 同回复不同阶段元组各成一条、相同元组同键',
+        phaseEvs.length === 3 && new Set(phaseEvs.map(x => x.dedup_key)).size === 2
+        && phaseEvs.some(x => x.dedup_key === dk('doubao', 'conv-a', 'msg-1'))
+        && phaseEvs.some(x => x.dedup_key === dk('doubao', 'conv-a', 'msg-1', CWU_PHASE2) && x.input_tokens === 17700),
+        JSON.stringify(phaseEvs.map(x => [x.dedup_key, x.input_tokens])));
 
       const noTime = stateTree({ m1: { extra: extra({ create_time_ms: undefined }) } });
       ok('doubaoEvents 无时间跳过', doubaoEvents(noTime, 'doubao').length === 0);
@@ -365,9 +387,9 @@ export async function testDoubaoLeveldb(ok) {
       const r3 = await collect(blobPath);
       ok('collect 三文件插入计数（ldb 2 条 + wal 1 条 + blob 1 条）', r1.inserted === 2 && r2.inserted === 1 && r3.inserted === 1, `r1=${r1.inserted} r2=${r2.inserted} r3=${r3.inserted}`);
       ok('collect 外置/无用量值不插', countByTool('doubao') === 4, `total=${countByTool('doubao')}`);
-      ok('collect ldb+wal+blob 事件落库', ev('doubao:conv-ldb:msg-ldb2').total_tokens === 17000
-        && ev('doubao:conv-wal:msg-wal').total_tokens === 17000 && ev('doubao:conv-blob:msg-blob').total_tokens === 17000);
-      ok('collect ldb 事件', ev('doubao:conv-a:msg-ldb').project === 'dashboard');
+      ok('collect ldb+wal+blob 事件落库', ev(dk('doubao', 'conv-ldb', 'msg-ldb2')).total_tokens === 17000
+        && ev(dk('doubao', 'conv-wal', 'msg-wal')).total_tokens === 17000 && ev(dk('doubao', 'conv-blob', 'msg-blob')).total_tokens === 17000);
+      ok('collect ldb 事件', ev(dk('doubao', 'conv-a', 'msg-ldb')).project === 'dashboard');
 
       const again = await collect(ldbPath); await collect(walPath); await collect(blobPath);
       ok('collect 重扫幂等（dedup 收成一条）', again.inserted === 0 && countByTool('doubao') === 4, `again=${again.inserted} total=${countByTool('doubao')}`);
@@ -395,7 +417,7 @@ export async function testDoubaoLeveldb(ok) {
       const originals = SOURCES.slice();
       try {
         SOURCES.splice(0, SOURCES.length, {
-          tool: 'doubaowork', label: '豆包工作', collector: 'doubao', version: 1, kind: 'leveldb',
+          tool: 'doubaowork', label: '豆包工作', collector: 'doubao', version: 2, kind: 'leveldb',
           roots: [join(dir, 'fixture')],
         });
         const scanner = new Scanner(store);
@@ -405,27 +427,70 @@ export async function testDoubaoLeveldb(ok) {
         ok('Scanner 重扫幂等', store.byTool().reduce((a, r) => a + r.total, 0) === first);
       } finally { SOURCES.splice(0, SOURCES.length, ...originals); }
     }
+
+    /* ---------- v1→v2 升版清旧行 + 多 profile（root = App 目录） ---------- */
+    {
+      const store2 = new Store(join(dir, 'migrate.db'));
+      const appDir = join(dir, 'app', 'DoubaoWork');
+      const ldbOf = (profile) => join(appDir, profile, 'IndexedDB', 'chrome_doubaowork-chat_0.indexeddb.leveldb');
+      const put = (profile, tree) => {
+        mkdirSync(ldbOf(profile), { recursive: true });
+        const p = join(ldbOf(profile), '000001.ldb');
+        writeFileSync(p, ldbTable([[blockPayload([[Buffer.from('k'), inlineValue(new Ssv().obj([['t', tree]]))]]), 0]]));
+        return p;
+      };
+      // Default：同一回复两个阶段（v1 键只会收成一条）；Profile 2：另一个配置档里的一条回复
+      const CWU_B = JSON.stringify({ system_prompt: 4000, messages: 12000, skills: 800, tools: 900, total_window_size: 256000 });
+      const defPath = put('Default', stateTree({
+        a: { extra: extra({ message_id: 'mig-1', conversation_id: 'conv-mig' }) },
+        b: { extra: extra({ message_id: 'mig-1', conversation_id: 'conv-mig', context_window_usage: CWU_B }) },
+      }));
+      put('Profile 2', stateTree({ c: { extra: extra({ message_id: 'p2-1', conversation_id: 'conv-p2' }) } }));
+      // 模拟升级前的库：v1 键旧行 + files 行 state._v=1（版本落后本身就会强制全量重扫）
+      store2.insertEvent({ ts: 1.7e12, tool: 'doubaowork', model: 'doubao-model-38', session_id: 'conv-mig', project: null,
+        input_tokens: 17000, cached_input: 0, cache_write: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 17000,
+        dedup_key: 'doubaowork:conv-mig:mig-1' });
+      store2.saveFile({ path: defPath, tool: 'doubaowork', session_id: '000001.ldb', size: 1, mtime_ms: 1, offset: 0, state_json: JSON.stringify({ _v: 1 }) });
+      const originals = SOURCES.slice();
+      try {
+        SOURCES.splice(0, SOURCES.length, { tool: 'doubaowork', label: '豆包工作', collector: 'doubao', version: 2, kind: 'leveldb', roots: [appDir] });
+        const scanner = new Scanner(store2);
+        await scanner.scanAll({ quiet: true });
+        const keysOf = () => store2.db.prepare("SELECT dedup_key FROM events WHERE tool='doubaowork' ORDER BY dedup_key").all().map(r => r.dedup_key);
+        const keys = keysOf();
+        ok('升版重扫清掉 v1 键旧行', !keys.includes('doubaowork:conv-mig:mig-1'), JSON.stringify(keys));
+        ok('同回复两阶段各成一条（v1 少算的补回）',
+          keys.includes(dk('doubaowork', 'conv-mig', 'mig-1')) && keys.includes(dk('doubaowork', 'conv-mig', 'mig-1', CWU_B)), JSON.stringify(keys));
+        ok('root=App 目录时 Profile 2 的 store 也被采到', keys.includes(dk('doubaowork', 'conv-p2', 'p2-1')), JSON.stringify(keys));
+        ok('v2 重扫后恰 3 条', keys.length === 3, JSON.stringify(keys));
+        ok('files 行升到 _v 2', JSON.parse(store2.getFile(defPath).state_json)._v === 2);
+        const total = store2.byTool().find(r => r.tool === 'doubaowork')?.total;
+        await scanner.scanAll({ quiet: true });
+        ok('v2 再扫幂等（清旧行对 v2 行无副作用）',
+          store2.byTool().find(r => r.tool === 'doubaowork')?.total === total && keysOf().length === 3);
+      } finally { SOURCES.splice(0, SOURCES.length, ...originals); store2.close(); }
+    }
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 }
 
 /**
- * 端到端 fixture：在 <home>/Library/Application Support/{Doubao,DoubaoWork}/Default/IndexedDB
- * 下写出与真实布局一致的 leveldb 树（raw/snappy .ldb、跨 32KB .log、.blob 外置值、
- * ff 11 01 外置干扰、无关 leveldb 目录）。run.mjs 第 3 层经真实 config SOURCES + CLI scan
- * 走完整链路后，用返回的黄金数字断言。
+ * 端到端 fixture：在 <home>/Library/Application Support/{Doubao,DoubaoWork}/ 下写出与真实布局一致的
+ * leveldb 树：Default 配置档（raw/snappy .ldb、跨 32KB .log、.blob 外置值、ff 11 01 外置干扰、
+ * 无关 leveldb 目录）+ "Profile 2" 配置档（多账号时 App 会另建，root 是 App 目录才能覆盖）。
+ * run.mjs 第 3 层经真实 config SOURCES + CLI scan 走完整链路后，用返回的黄金数字断言。
  * 返回 { gold, rewriteFiles }：gold[<tool>] = { n, total, model, projects, dedup }；
  * rewriteFiles 为字节相同重写系列（改 mtime 触发重扫，dedup 应保持幂等）。
  */
 export function writeDoubaoE2eFixture(home) {
   const gold = {};
   const rewriteFiles = [];
-  const usages = { system_prompt: 4000, messages: 12000, skills: 800, tools: 200, total_window_size: 256000 };
   for (const [tool, app] of [['doubao', 'Doubao'], ['doubaowork', 'DoubaoWork']]) {
-    const root = join(home, 'Library', 'Application Support', app, 'Default', 'IndexedDB');
+    const appDir = join(home, 'Library', 'Application Support', app);
+    const root = join(appDir, 'Default', 'IndexedDB');
     const ldbDir = join(root, 'chrome_doubao-chat_0.indexeddb.leveldb');
     mkdirSync(ldbDir, { recursive: true });
     const mk = (mid, cid, off) => stateTree({ m1: { extra: extra({
-      context_window_usage: JSON.stringify(usages), message_id: mid, conversation_id: cid, create_time_ms: 1.7e12 + off,
+      message_id: mid, conversation_id: cid, create_time_ms: 1.7e12 + off,
     }) } });
     const v = (tree) => inlineValue(new Ssv().obj([['t', tree]]));
     const ev = (tree) => envelopeValue(new Ssv().obj([['t', tree]]));
@@ -450,13 +515,23 @@ export function writeDoubaoE2eFixture(home) {
     const otherDir = join(root, 'other-leveldb');
     mkdirSync(otherDir, { recursive: true });
     writeFileSync(join(otherDir, '000001.ldb'), Buffer.alloc(64));
-    rewriteFiles.push(ldbPath, walPath, blobPath);
+    // 第二配置档：同 App 目录下 "Profile 2"/IndexedDB，一条回复
+    const p2Dir = join(appDir, 'Profile 2', 'IndexedDB', 'chrome_doubao-chat_0.indexeddb.leveldb');
+    mkdirSync(p2Dir, { recursive: true });
+    const p2Path = join(p2Dir, '000001.ldb');
+    writeFileSync(p2Path, ldbTable([[blockPayload([[Buffer.from('p'), v(mk(`msg-${tool}-p2`, `e2e-${tool}-p2`, 5000))]]), 1]]));
+    // App 自己的日志目录：有 .log 但不在 .indexeddb.leveldb 下，不得入库
+    const logDir = join(appDir, 'sdk_storage', 'log');
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(join(logDir, '000001.log'), Buffer.from('plain app log\n'));
+    rewriteFiles.push(ldbPath, walPath, blobPath, p2Path);
     gold[tool] = {
-      n: 4, total: 68000,
+      n: 5, total: 85000,
       model: 'doubao-model-38',
       projects: ['dashboard'],
-      dedup: [`${tool}:e2e-${tool}-ldb:msg-${tool}-ldb1`, `${tool}:e2e-${tool}-ldb:msg-${tool}-ldb2`,
-        `${tool}:e2e-${tool}-wal:msg-${tool}-wal`, `${tool}:e2e-${tool}-blob:msg-${tool}-blob`],
+      dedup: [dk(tool, `e2e-${tool}-ldb`, `msg-${tool}-ldb1`), dk(tool, `e2e-${tool}-ldb`, `msg-${tool}-ldb2`),
+        dk(tool, `e2e-${tool}-wal`, `msg-${tool}-wal`), dk(tool, `e2e-${tool}-blob`, `msg-${tool}-blob`),
+        dk(tool, `e2e-${tool}-p2`, `msg-${tool}-p2`)],
     };
   }
   return { gold, rewriteFiles };

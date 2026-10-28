@@ -118,7 +118,7 @@ function migrate(db, dbPath) {
 
 /** 采集器可能调用的全部写方法：stageWrites() 代理这些，其余（读）直通 */
 const STAGED_WRITES = ['insertEvent', 'insertDshEvent', 'insertToolCall', 'insertCredit',
-  'saveQuota', 'dropStaleCodexRows', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent'];
+  'saveQuota', 'dropStaleCodexRows', 'dropStaleDoubaoEvents', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent'];
 
 export class Store {
   constructor(dbPath) {
@@ -364,6 +364,17 @@ export class Store {
         .run(`${prefix}${stem}:`, `${prefix}${stem};`);
     }
     return true;
+  }
+
+  /**
+   * 豆包 v1→v2 升版清旧行：v1 去重键 = tool:conversation:identity（2 个冒号），把同一条回复里
+   * 随任务阶段变化的多个 context_window_usage 元组收成一条（少算）；v2 键多一段 cwu 摘要
+   * （3 个冒号）。全量重扫时清掉 v1 行，否则新旧口径并存双计。走 idx_events_tool_ts 的 tool
+   * 前缀 + GLOB 过滤，只碰本工具的行；对每份被重扫的文件各调一次也幂等（v2 行永不匹配）。
+   */
+  dropStaleDoubaoEvents(tool) {
+    return this.db.prepare(
+      "DELETE FROM events WHERE tool = ? AND dedup_key NOT GLOB '*:*:*:*'").run(tool).changes;
   }
 
   /** 积分账本（Qoder 等源）：幂等入账，返回是否为新行 */

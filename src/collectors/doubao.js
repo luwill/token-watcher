@@ -8,21 +8,27 @@ import { normalizeModel } from '../models.js';
  * 豆包 / 豆包工作采集器（同一解析器，两个 SOURCES 条目）。
  *
  * 两个 App 都是 ByteDance 自带 Chromium 内核的桌面壳，聊天与 Agent 任务状态存在
- * ~/Library/Application Support/{Doubao,DoubaoWork}/Default/IndexedDB/chrome_*chat_0.indexeddb.leveldb
- * （LevelDB + V8 structured-clone，解码见 ../v8leveldb.js）。本机实测（2026-10-27，
- * 豆包工作 2.34.1 / 豆包 9 月残留库）唯一的用量信号是任务状态记录里每条机器人回复自带的
+ * ~/Library/Application Support/{Doubao,DoubaoWork}/<profile>/IndexedDB/chrome_*chat_0.indexeddb.leveldb
+ * （LevelDB + V8 structured-clone，解码见 ../v8leveldb.js；profile 不只有 Default，多账号时会有
+ * "Profile 2" 等，故 root 是 App 目录）。本机实测（2026-10-27/28，豆包工作 2.34.1 / 豆包 9 月残留库）
+ * 唯一的用量信号是任务状态记录里每条机器人回复自带的
  *   state.mainTaskDataMap.<task>.receivedMessages.<message_id>.extra.ext.context_window_usage
  *   = '{"system_prompt":N,"messages":N,"skills":N,"tools":N,"total_window_size":256000}'
  * 四项是本次请求送进模型的上下文 token 拆分（total_window_size 是窗口容量，不是用量）。
  *
  * 口径与边界（都在文档里明示，不做任何估算补全）：
- * - 一条机器人回复 = 一次请求 = 一条事件：input = 四项之和，output/缓存/思维全为 0，
- *   total = input。本地没有输出 token，这是上游不存，不是没解到。
+ * - 一条机器人回复（receivedMessage）是一次 Agent 运行，内部多次调用模型；它的 cwu 元组在
+ *   流式分片间不变，只在阶段切换（重组上下文再次调用）时变化——实测一条回复重写 290 次、
+ *   出现 9 个不同元组。**每个不同的元组 = 一次请求的输入上下文 = 一条事件**：input = 四项之和，
+ *   output/缓存/思维全为 0，total = input。本地没有输出 token，这是上游不存，不是没解到。
+ *   同一回复的多条事件共用 extra.create_time（App 只存回复创建时间）。
  * - 模型名本地不存，只有内部数字 id（ext.model_id / llm_model_type / model_type，实测 "38"），
  *   记作 doubao-model-<id>：能区分模型但不配价（不虚构成本）。
  * - 时间取 extra.create_time（毫秒 double）；会话 = extra.conversation_id；
- *   去重键 = tool:conversation_id:message_id —— 任务状态记录每轮都整体重写、WAL 与压实后的
- *   .ldb 各存一份、scopes 撤销日志还会留旧副本，全靠这把键收成一条。
+ *   去重键 = tool:conversation_id:message_id:cwu 摘要（4 段）。任务状态记录每个流式分片都整体
+ *   重写、WAL 与压实后的 .ldb 各存一份、其他窗口的同源 store 还有副本、scopes 撤销日志留旧版，
+ *   全靠这把键收拢：内容不变的重写幂等，内容变化即新请求。v1 键没有摘要段（3 段），升版全量
+ *   重扫时由 store.dropStaleDoubaoEvents 清掉，否则新旧并存双计。
  * - 豆包工作里这条记录只在任务进行中存在，任务结束就被删掉；只能靠常驻扫描在 compaction
  *   前从 WAL 里抓到，历史不可追溯。豆包本体（已卸载）的残留库是冻结快照，一次导入。
  * - 值可能被值级 snappy 包装（ff 11 02）或外置到 .indexeddb.blob 目录；两者都认，
@@ -156,7 +162,7 @@ function modelOf(objs) {
 
 const digest = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
 
-/** 一棵已反序列化的 IndexedDB 记录树 → 事件列表（可能为空，也可能多条：一个任务多轮回复） */
+/** 一棵已反序列化的 IndexedDB 记录树 → 事件列表（可能为空，也可能多条：一个任务多轮回复、一条回复多个阶段） */
 export function doubaoEvents(root, tool) {
   const events = [];
   for (const chain of containersWith(root, 'context_window_usage')) {
@@ -167,7 +173,8 @@ export function doubaoEvents(root, tool) {
     if (ts === null) continue; // 没有时间就无法落图：不编造
     const conversation = firstScalar(chain, CONV_KEYS, idString);
     const cwuText = typeof ext.context_window_usage === 'string' ? ext.context_window_usage : JSON.stringify(ext.context_window_usage);
-    const identity = firstScalar(chain, MSG_KEYS, idString) ?? digest(cwuText);
+    const cwuDigest = digest(cwuText);
+    const identity = firstScalar(chain, MSG_KEYS, idString) ?? cwuDigest;
     events.push({
       ts,
       tool,
@@ -180,15 +187,18 @@ export function doubaoEvents(root, tool) {
       output_tokens: 0,
       reasoning_tokens: 0,
       total_tokens: usage.input,
-      dedup_key: `${tool}:${conversation ?? '-'}:${identity}`,
+      // 4 段：末段是 cwu 摘要——同一回复不同阶段的元组各成一条；store.dropStaleDoubaoEvents 靠段数识别 v1 行
+      dedup_key: `${tool}:${conversation ?? '-'}:${identity}:${cwuDigest}`,
     });
   }
   return events;
 }
 
-export async function collectDoubaoFile(store, { tool, path }) {
+export async function collectDoubaoFile(store, { tool, path, state }) {
   const kind = doubaoFileKind(path);
   if (!kind) return { newOffset: 0, inserted: 0 };
+  // 全量重扫（首扫或采集器升版）先清本工具的 v1 键旧行；v2 行不匹配，重复调用无害
+  const purged = state ? 0 : store.dropStaleDoubaoEvents(tool);
   const buf = await readFile(path);
   let inserted = 0, undecodable = 0;
   let values;
@@ -207,5 +217,5 @@ export async function collectDoubaoFile(store, { tool, path }) {
     } catch { undecodable++; continue; } // scopes 撤销日志等非对象存储值：旧副本，去重后本就无贡献
     for (const ev of doubaoEvents(root, tool)) inserted += store.insertEvent(ev);
   }
-  return { newOffset: 0, inserted, undecodable };
+  return { newOffset: 0, inserted, undecodable, purged };
 }

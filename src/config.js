@@ -170,24 +170,30 @@ export const SOURCES = [
   {
     tool: 'doubao',
     label: '豆包',
-    // Chromium 壳应用：用量在 Default/IndexedDB/chrome_doubao-chat_0.indexeddb.leveldb（及同名 .blob）。
-    // root 收到 IndexedDB 一层，别让 App 自己持续写的日志目录触发 FSEvents 重扫。
+    // Chromium 壳应用：用量在 <profile>/IndexedDB/chrome_doubao-chat_0.indexeddb.leveldb（及同名 .blob）。
+    // root 必须是 App 目录而不是 Default：多账号 / 工作身份时 App 会另建 "Profile 2" 之类的配置档
+    // 并写在那里（2026-10-28 实测踩中——只扫 Default，换 profile 就静默采不到）。枚举阶段按
+    // *.indexeddb.leveldb / *.indexeddb.blob 收窄，App 自己的日志、缓存目录不会产生文件行；
+    // 代价是 watch 覆盖整个 App 目录、日志写入也会触发防抖扫描，可接受。
     // 只登 macOS 路径：Windows 下的 %LOCALAPPDATA% 位置未实测，不猜。
-    roots: [join(HOME, 'Library', 'Application Support', 'Doubao', 'Default', 'IndexedDB')],
+    roots: [join(HOME, 'Library', 'Application Support', 'Doubao')],
     kind: 'leveldb',
     collector: 'doubao',
-    version: 1,
+    // v2: 去重键补上 cwu 摘要——同一条回复的 context_window_usage 随任务阶段变化，每个不同元组
+    //     就是一次请求的输入上下文，v1 按 message_id 收成一条会少算；升版全量重扫并清掉 v1 行。
+    //     同批把 root 放宽到 App 目录覆盖多 profile。
+    version: 2,
     subscription: true,
   },
   {
     tool: 'doubaowork',
     label: '豆包工作',
-    // 与豆包同格式的工作版（独立 App，独立数据目录）；任务状态记录只在任务进行中存在，
-    // 靠常驻扫描在 compaction 前从 WAL 抓取——见 src/collectors/doubao.js
-    roots: [join(HOME, 'Library', 'Application Support', 'DoubaoWork', 'Default', 'IndexedDB')],
+    // 与豆包同格式的工作版（独立 App，独立数据目录，同样可能多 profile）；任务状态记录只在任务
+    // 进行中存在，靠常驻扫描在 compaction 前从 WAL 抓取——见 src/collectors/doubao.js
+    roots: [join(HOME, 'Library', 'Application Support', 'DoubaoWork')],
     kind: 'leveldb',
     collector: 'doubao',
-    version: 1,
+    version: 2, // 与 doubao 同步：v2 去重键补 cwu 摘要 + root 放宽到 App 目录
     subscription: true,
   },
   {
