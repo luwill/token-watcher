@@ -75,6 +75,8 @@ const LIGHT_TOOL_COLORS = {
   'claude-code': '#b4533a', 'ccmr': '#6d5bd0', 'codex': '#0e8a55', 'zcode': '#8a6d15',
   'dsh': '#1c6fb8', 'workbuddy': '#c9386f', 'grok': '#333a44', 'pi': '#0c7f8f',
   'opencode': '#bc5a10', 'kimi': '#25743f', 'qoder': '#7d5236', 'cursor': '#7d6412', 'antigravity': '#4f4a5c',
+  // 豆包品牌蓝加深版（白底 ≥4.5:1，浅色全集最差对保持原状，见 docs/evidence/stage1）
+  'doubao': '#1b4fd6', 'doubaowork': '#2c59ad',
 };
 const toolColor = (t, fallback) => (isLight() && LIGHT_TOOL_COLORS[t]) || TOOL_COLORS[t] || fallback;
 

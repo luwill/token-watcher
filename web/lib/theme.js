@@ -10,9 +10,11 @@ export const TOOL_COLORS = {
   'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
   'pi': '#2dd4bf', 'opencode': '#ff8c42',
   'antigravity': '#6d6875', 'kimi': '#95d5b2', 'qoder': '#9c6644', 'cursor': '#f2cc8f',
-  // doubao/doubaowork：豆包品牌蓝系；选色先按 CIEDE2000（含色盲模拟）全集最差配对复核，
-  // 见 docs/evidence/stage1 的记录（最差配对不劣于现状 ccmr/dsh）。
-  'doubao': '#1d6cff', 'doubaowork': '#5b9bff',
+  // doubao/doubaowork：豆包品牌蓝系。选色按 CIEDE2000（含红盲/绿盲模拟）全集复核：
+  // 常视觉最差对保持原 zcode/cursor（ΔE 8.89）；色盲模拟最差对为 doubaowork vs ccmr/dsh
+  // （protan 5.92 / deutan 4.50），全部 ≥4.5 可区分区间，兄弟对 doubao/doubaowork 各向 ≥11.4。
+  // 完整校验记录见 docs/evidence/stage1。
+  'doubao': '#1d6cff', 'doubaowork': '#5c8fd0',
 };
 
 export const TOOL_LABEL = {
