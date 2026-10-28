@@ -10,7 +10,7 @@
 - host: degraded（人类 2026-10-28 批准 env-clean 降级：本机 sandbox-exec 的 localhost 放行规则匹配全部外网地址，deny_network 无法 OS 强制；runner 拒绝后经批准以 env-clean 运行。skill 对限制性 policy 强制升级 sandbox-exec 且探针失败拒绝降级 → policy 实际设为非限制（deny_network=false、deny_paths=[]），红线非强制项见 Not verified）
 - policy: docs/autopilot-policy.json at the pinned commit
 - helper pin: 8843c17e5c28546d10a2fdee99a301bd0c89c7e7f439b501a470e8c771d47f80
-- current: stage 4
+- current: landing
 
 ## Goal
 
@@ -34,7 +34,7 @@ Frozen at takeoff. A run changes `status` and `evidence`, never the criterion; a
 | C2 | 单元测试：`test/doubao-leveldb.mjs` 覆盖 v8leveldb（snappy 原始流、raw/snappy 块、WAL 32KB 分片重组、.blob 外置值、畸形输入静默跳过）与 doubaoUsage/doubaoEvents（input 四项和、ts/会话/project、model=doubao-model-<id>、output=0）及 collectDoubaoFile 经 store 真实链路、幂等重扫 | `gate-s2`；mutant 破坏解码/去重细节 → 断言失败 | proven（gate-s2 绿 @7f960b5；mutant-c2-r2 KILLED；review-s2-full approve：0 blocking、2 minor 均 closed 不阻塞） | `gate-s2.md`,`mutant-c2-r2.md`,`review-s2-full-request.json`,`review-s2-full-findings.json` |
 | C3 | 端到端：`test/run.mjs` 合成 leveldb fixture（raw .ldb + snappy 块 + 跨 32KB .log + 字节相同重写系列 + `ff 11 01` 外置干扰 + 无关 leveldb 目录），scan ×2 幂等，黄金数字（事件数、input 和、output=0、model、project、dedup）断言 | `gate-s3`；mutant 改 dedup key → 重复事件被断言捕获 | proven（gate-s3 绿 @bb0815b；mutant-c3 KILLED；review-s3-full approve：0 blocking、2 minor 均 closed 不阻塞） | `gate-s3.md`,`mutant-c3.md`,`review-s3-full-request.json`,`review-s3-full-findings.json` |
 | C4 | 真实数据：临时 HOME + 软链真实 `{Doubao,DoubaoWork}` 目录跑 scan：doubao ≥1 条事件（9 月冻结库）、doubaowork 行健康、doctor 两行正常 | 落地证据（非代码检查，无 mutant） | open | |
-| C5 | 文档：`README.md`/`README.zh-CN.md` 支持表 13→15、`docs/ARCHITECTURE.md` 豆包格式节、`package.json` description/keywords 增豆包 | `gate-s4`（docs 路径豁免阶段对抗评审）+ 落地审计 | open | |
+| C5 | 文档：`README.md`/`README.zh-CN.md` 支持表 13→15、`docs/ARCHITECTURE.md` 豆包格式节、`package.json` description/keywords 增豆包 | `gate-s4`（docs 路径豁免阶段对抗评审）+ 落地审计 | proven（gate-s4 绿 @8651856；改动全在 docs 路径/文档元数据，阶段对抗评审按契约豁免并记录，落地审计照常跑） | `gate-s4.md` |
 
 ### Independent mutation targets
 
@@ -63,7 +63,7 @@ Append only. The human rules on each at landing.
 1. [x] Stage 1 前端登记完整化 — owns C1（theme.js/app.js/style.css/index.html/.gitignore 增 `.zcode/`）→ gate-s1 绿、mutant-c1 KILLED、review-s1 approve，C1 proven
 2. [x] Stage 2 单元测试 — owns C2（test/doubao-leveldb.mjs）→ gate-s2 绿、mutant-c2-r2 KILLED、review-s2-full approve，C2 proven
 3. [x] Stage 3 端到端 fixture — owns C3（test/run.mjs E2E fixture + 全局黄金数字）→ gate-s3 绿、mutant-c3 KILLED、review-s3-full approve，C3 proven
-4. [ ] Stage 4 文档 — owns C5（README ×2、ARCHITECTURE、package.json）
+4. [x] Stage 4 文档 — owns C5（README ×2、ARCHITECTURE、package.json）→ gate-s4 绿；docs 路径豁免阶段对抗评审（记录于本行），落地审计照常跑，C5 proven
 5. [ ] Landing 真实数据验证 — owns C4 + 合并 autopilot/doubao → main
 
 ## Ledger
@@ -83,6 +83,7 @@ Append only. The human rules on each at landing.
 | R1 | 1 | snapshot-only（同模型族，消毒+pinned dac6444，见 evidence review-s1-request/findings/receipt） | approve：0 blocking；2 minor（theme.js 注释配对数字归属可读性；浅色/徽章登记仅证据约束无自动化检测——与既有工具现状一致） | closed | 阶段验收通过，minor 不阻塞；评审文件已登记 evidence |
 | R2 | 2 | snapshot-only（同模型族，pinned a5e6ab6，见 evidence review-s2-full-request/findings/receipt） | approve：0 blocking；2 minor（fixture 编码器与解码器同源 → 格式级回归由 C4 真实数据兜底；摘要兜底去重键未 pin sha1 输出格式） | closed | C2 阶段验收通过，minor 不阻塞；targets-only 评审 review-s2 已在变异波前指定 3 个 C2 变异目标（mutant-c2 首跑 INCONCLUSIVE 因签名正则带行首锚点 + 目标行被 40 行尾裁剪，以 -r2 为准） |
 | R3 | 3 | snapshot-only（同模型族，pinned 194f2e8，见 evidence review-s3-full-request/findings/receipt） | approve：0 blocking；2 minor（E2E fixture 时间戳 2023 → 健康表把豆包源判 stale，'健康 12 源 ok' 未覆盖豆包，留待 C4 真数据兜底；全局合计/事件数用字面量 +136000/+8 存在漂移风险，与既有黄金数字风格一致） | closed | C3 阶段验收通过，minor 不阻塞；targets-only 评审 review-s3 已在变异波前指定 2 个 C3 变异目标（author 实现第 1 个：dedup_key 丢 identity） |
+| — | 4 | 阶段对抗评审豁免（docs 路径，契约 §Docs paths：`docs/*.md` 且不在 `src/` 内的文档改动） | Stage4 改动 = README ×2（根文档）+ `docs/ARCHITECTURE.md` + package.json 仅 description/keywords 元数据（diff 核验无依赖/代码改动）→ 按契约豁免并记录 | closed | 落地审计照常跑，纳入 landing 评审范围 |
 
 ### Parked
 
