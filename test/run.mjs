@@ -2051,6 +2051,7 @@ await (await import('./prune-roots.mjs')).testPruneRoots(ok);
 await (await import('./codex-key-archive.mjs')).testCodexKeyArchive(ok);
 await (await import('./session-drilldown.mjs')).testSessionDrilldown(ok);
 await (await import('./antigravity-usage.mjs')).testAntigravityUsage(ok);
+await (await import('./doubao-leveldb.mjs')).testDoubaoLeveldb(ok);
 await (await import('./claude-cowork.mjs')).testClaudeCowork(ok);
 await (await import('./argon-pricing.mjs')).testArgonPricing(ok);
 await (await import('./official-pricing.mjs')).testOfficialPricing(ok);
