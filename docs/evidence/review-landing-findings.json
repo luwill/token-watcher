@@ -1,0 +1,31 @@
+{
+  "verdict": "approve",
+  "summary": "落地审计（landing audit）：base d04cc81 → head 056c59e。审计范围：全部 5 条验收标准、证据完整性、docs 豁免资格、变异/门禁/评审链、合并前置条件。结论：C1–C5 全部 proven（C1/C4 各有 erratum 待人类裁定，P2 提议待裁定）；27/27 证据核验通过；mutant 每标准 ≥1 KILLED；gate-base/s1/s2/s3/s4 全绿；评审 R1/R2/R3 approve、Stage4 阶段对抗豁免符合契约 docs 路径。无 blocking，批准合并。",
+  "limits": "本地审计者（无 codex CLI、无云模型，与 author 同模型族，独立性受限已披露）；快照只读；未在真实设备上复现 scan（真实数据验证证据由 landing-c4.md 记录）；env-clean 降级下 deny_network/deny_paths 非 OS 强制（P1 accepted，Not verified 段已披露）。",
+  "findings": [
+    {
+      "title": "minor: C1 与 C4 erratum、P2 提议均为人类落地裁定项，合并后仍须裁定",
+      "confidence": 0.9,
+      "severity": "minor",
+      "file": "docs/runs/run.md",
+      "line_start": 57,
+      "line_end": 61,
+      "why_vulnerable": "C1「按实测数值验收」、C4「按行存在/事件>0/退出码 0 验收」、P2「root 收窄或 CWU 感知 stale」三项留待人类裁定；autopilot 契约要求 run 不能自批 scope 扩展。合并本身被人类预授权，但裁定项不随合并自动关闭。",
+      "what_goes_wrong": "若人类未在合并后跟进裁定，两项 erratum 的验收口径与 P2 优化长期悬置。",
+      "how_to_confirm": "读 run.md Criterion errata 与 Parked/Proposed 段。",
+      "recommendation": "合并后向人类列出 3 项待裁定（C1 数值验收 / C4 健康口径 / P2 方案），不阻塞合并。"
+    },
+    {
+      "title": "minor: 评审者独立性受限于同模型族（本机无 codex/云评审）",
+      "confidence": 0.9,
+      "severity": "minor",
+      "file": "docs/runs/run.md",
+      "line_start": 79,
+      "line_end": 86,
+      "why_vulnerable": "R1/R2/R3 与本次 landing 审计均由同模型族评审者执行（reviewer=author 同族，snapshot-only）；契约预算下无独立 codex CLI/云模型，独立性限制已在各评审与本审计披露。",
+      "what_goes_wrong": "同源评审可能系统性遗漏同类盲区；C4 真实数据核对（landing-c4.md 逐条 + WAL 探针）提供了格式级外部锚点，缓解但未完全消除。",
+      "how_to_confirm": "读各 review-request.json 的 limits 字段。",
+      "recommendation": "接受为已披露限制；若人类后续配置 codex/云评审可补做一次全量复核。"
+    }
+  ]
+}

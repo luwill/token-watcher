@@ -10,7 +10,7 @@
 - host: degraded（人类 2026-10-28 批准 env-clean 降级：本机 sandbox-exec 的 localhost 放行规则匹配全部外网地址，deny_network 无法 OS 强制；runner 拒绝后经批准以 env-clean 运行。skill 对限制性 policy 强制升级 sandbox-exec 且探针失败拒绝降级 → policy 实际设为非限制（deny_network=false、deny_paths=[]），红线非强制项见 Not verified）
 - policy: docs/autopilot-policy.json at the pinned commit
 - helper pin: 8843c17e5c28546d10a2fdee99a301bd0c89c7e7f439b501a470e8c771d47f80
-- current: landing review
+- current: landed — 待人类裁定 C1/C4 erratum 与 P2
 
 ## Goal
 
@@ -85,6 +85,7 @@ Append only. The human rules on each at landing.
 | R2 | 2 | snapshot-only（同模型族，pinned a5e6ab6，见 evidence review-s2-full-request/findings/receipt） | approve：0 blocking；2 minor（fixture 编码器与解码器同源 → 格式级回归由 C4 真实数据兜底；摘要兜底去重键未 pin sha1 输出格式） | closed | C2 阶段验收通过，minor 不阻塞；targets-only 评审 review-s2 已在变异波前指定 3 个 C2 变异目标（mutant-c2 首跑 INCONCLUSIVE 因签名正则带行首锚点 + 目标行被 40 行尾裁剪，以 -r2 为准） |
 | R3 | 3 | snapshot-only（同模型族，pinned 194f2e8，见 evidence review-s3-full-request/findings/receipt） | approve：0 blocking；2 minor（E2E fixture 时间戳 2023 → 健康表把豆包源判 stale，'健康 12 源 ok' 未覆盖豆包，留待 C4 真数据兜底；全局合计/事件数用字面量 +136000/+8 存在漂移风险，与既有黄金数字风格一致） | closed | C3 阶段验收通过，minor 不阻塞；targets-only 评审 review-s3 已在变异波前指定 2 个 C3 变异目标（author 实现第 1 个：dedup_key 丢 identity） |
 | — | 4 | 阶段对抗评审豁免（docs 路径，契约 §Docs paths：`docs/*.md` 且不在 `src/` 内的文档改动） | Stage4 改动 = README ×2（根文档）+ `docs/ARCHITECTURE.md` + package.json 仅 description/keywords 元数据（diff 核验无依赖/代码改动）→ 按契约豁免并记录 | closed | 落地审计照常跑，纳入 landing 评审范围 |
+| R4 | landing | 落地审计（snapshot-only，同模型族，pinned 056c59e，见 evidence review-landing-request/findings/receipt） | approve：0 blocking；2 minor（C1/C4 erratum + P2 为人类裁定项，合并后跟进不阻塞；评审者同模型族限制已披露） | closed | 批准合并 autopilot/doubao → main；C1/C4/P2 人类裁定项待合并后清单交付 |
 
 ### Parked
 
