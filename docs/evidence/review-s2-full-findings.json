@@ -1,0 +1,31 @@
+{
+  "verdict": "approve",
+  "summary": "Stage 2 单元测试评审（snapshot-only，pinned a5e6ab6）：test/doubao-leveldb.mjs 覆盖契约 C2 全部要点——v8leveldb 解码原语（snappy literal/copy1/copy2、块 restart、WAL 单块与跨 32KB FIRST/LAST 重组、torn/零填充截止）、IndexedDB 值形态（内联/Blink 信封/值级 snappy/外置/.blob）、SSV（混合字段/嵌套/稠密数组/UTF8/one-byte/自引用环）、doubaoUsage 四项和与显式 total/used 兜底、doubaoEvents 字段口径与去重键、collectDoubaoFile 经 Store 真实链路与幂等重扫、畸形输入静默跳过计 undecodable、Scanner 换 SOURCES 重扫幂等。gate-s2 绿（tested 7f960b5）、mutant-c2-r2 KILLED（dedup_key 丢 identity → ✗ doubaoEvents 去重键），证据已 verify-evidence 全量通过。0 blocking。",
+  "limits": "snapshot-only; no command reproduction; no OS sandbox; reviewer: same model family as the author (local, no codex CLI, no cloud)",
+  "findings": [
+    {
+      "title": "fixture 编码器与解码器同源，格式级回归只能靠 C4 真实数据兜住",
+      "confidence": 0.8,
+      "severity": "minor",
+      "file": "test/doubao-leveldb.mjs",
+      "line_start": 14,
+      "line_end": 130,
+      "why_vulnerable": "测试自带的 LevelDB/V8 编码器（snappyEncode/blockPayload/walFile/Ssv/ldbTable）是按解码器 src/v8leveldb.js 的布局假设书写的；若编码器与解码器共享同一错误假设（如块 entry 布局、信封版本语义），fixture 与断言可能自洽地全绿，掩盖与真实 Chromium 格式的偏差。本会话早前已用真实豆包库核验过解码层，但该核验不在本快照内。",
+      "what_goes_wrong": "未来 Chromium/豆包升级改变 IndexedDB 值格式或 LevelDB 表布局时，仅跑本单元测试无法发现回归；真值校验落在 C4（软链真实目录 scan）。",
+      "how_to_confirm": "人为改乱 walFile 的块边界语义（如 FIRST/MIDDLE 顺序）同时不改测试，观察是否仍全绿——凡编码器按解码器假设镜像处均存在此风险面。",
+      "recommendation": "接受为已知边界并在 run 记录 Not verified 或 C4 中注明：单元 fixture 自洽，格式级回归由真实数据检查兜底；或后续为编码器加独立参考实现交叉验证。不阻塞本阶段验收。"
+    },
+    {
+      "title": "摘要兜底去重键只断言前缀，未 pin 摘要算法输出格式",
+      "confidence": 0.7,
+      "severity": "minor",
+      "file": "test/doubao-leveldb.mjs",
+      "line_start": 314,
+      "line_end": 316,
+      "why_vulnerable": "「缺 message_id 用摘要兜底且去重键仍成」只断言 dedup_key 以 'doubao:conv-a:' 开头，未断言 sha1 摘要确为 16 hex 且随 cwuText 内容确定变化；若 digest() 实现被改为弱哈希或固定值，该断言仍可能绿。",
+      "what_goes_wrong": "identity 兜底路径退化（如摘要冲突或固定值）时单元测试捕捉不到，实际数据里缺 message_id 的记录会互相去重漏计。",
+      "how_to_confirm": "把 digest() 临时改为返回常量，观察该断言是否仍通过。",
+      "recommendation": "可选增强：断言摘要为 /^[0-9a-f]{16}$/ 并比较两条不同 cwuText 的摘要不同。不阻塞验收。"
+    }
+  ]
+}
