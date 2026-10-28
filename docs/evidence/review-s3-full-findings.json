@@ -1,0 +1,31 @@
+{
+  "verdict": "approve",
+  "summary": "Stage 3（端到端 fixture）快照评审：base e5daac2 → head 194f2e8。测试与证据链一致：gate-s3 绿（bb0815b）、mutant-c3 KILLED（author 实现 adversary 目标1：dedup_key 丢 identity → 端到端重复/缩水事件被黄金断言捕获）、targets-only 评审在变异波前发出并登记。无 blocking。",
+  "limits": "snapshot-only；本地评审（无 codex CLI、无云模型，与 author 同族模型，独立性受限已披露）；未复现命令；未检查字节级 fixture 与真实设备数据的一致性（由 C4 真实数据落地兜底）。",
+  "findings": [
+    {
+      "title": "minor: E2E fixture 时间戳为 2023，健康表把豆包源判为 stale，'健康 12 源 ok' 未覆盖豆包",
+      "confidence": 0.9,
+      "severity": "minor",
+      "file": "test/doubao-leveldb.mjs",
+      "line_start": 422,
+      "line_end": 422,
+      "why_vulnerable": "fixture 的 create_time_ms=1.7e12（2023-11）落在健康检查时间窗外，computeHealth 把 doubao/doubaowork 判为 stale/empty，'健康 12 源 ok' 因此仍绿——豆包源的健康状态在 C3 层没有被断言。若某天真实配置把豆包健康语义改坏，C3 不会察觉。",
+      "what_goes_wrong": "健康表对豆包源的 ok 判定是盲区；但 C4 明确用真实数据断言 doubaowork 行健康，此处留待 C4 覆盖，不构成当前 stage 缺陷。",
+      "how_to_confirm": "git show 194f2e8:test/doubao-leveldb.mjs:422 时间戳与 run.mjs:1097 健康断言对比。",
+      "recommendation": "接受为已知盲区；C4 落地时以真实数据断言两源健康行，若仍希望 C3 覆盖，可后续追加近时时间戳 fixture。"
+    },
+    {
+      "title": "minor: 全局合计/事件数用字面量 +136000/+8，与 DOUBAO_GOLD 存在漂移风险",
+      "confidence": 0.7,
+      "severity": "minor",
+      "file": "test/run.mjs",
+      "line_start": 874,
+      "line_end": 890,
+      "why_vulnerable": "全源合计与事件总数把豆包贡献写死为 136000/8，未从 DOUBAO_GOLD.doubao/doubaowork 推导；若 fixture 构建器黄金数字调整，两处需手动同步。现有 36850/22 等字面量同风格，属既有约定。",
+      "what_goes_wrong": "维护期数字漂移；当前无实际错误（382686 与 32 均为运行验证值）。",
+      "how_to_confirm": "对照 run.mjs:874/883/1090 与 DOUBAO_GOLD 值。",
+      "recommendation": "接受为风格取舍（与既有黄金数字一致）；如改推导式需同时改三处并重跑。"
+    }
+  ]
+}

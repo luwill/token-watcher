@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "job_id": "31fd24265a974d689e10c505cd8d3623",
+  "inputs": {
+    "repository": "/Users/louwill/Vibing/token-stats",
+    "base": "e5daac2bed6703f44e15554c37e1570dcc54e1d1",
+    "head": "194f2e8c294115a6d38d2f52fa10ffba15441541",
+    "scope": "stage 3-full",
+    "record": "docs/runs/run.md",
+    "files": {
+      "docs/runs/run.md": "b1c263ebb983769850ab0935ba4ada91b68a0fcad6a8f2f02e7658b55ebed7a0",
+      "docs/autopilot.md": "f58c6777118be3ebda7727d8756938e145f705b8698817e9a3054e8ac0193c89",
+      "docs/autopilot-policy.json": "0123cb329409b25f6ac33699dddc2b32dc825dc985d3c5679ebe2c438be5751d"
+    },
+    "execution_policy": {
+      "path": "docs/autopilot-policy.json",
+      "sha256": "0123cb329409b25f6ac33699dddc2b32dc825dc985d3c5679ebe2c438be5751d",
+      "effective": {
+        "record_paths": {
+          "evidence_dir": "docs/evidence",
+          "run_record": "docs/runs/run.md"
+        },
+        "write_dirs": [],
+        "version": 1,
+        "sandbox": "env-clean",
+        "deny_network": false,
+        "deny_paths": [],
+        "read_paths": [
+          "/usr",
+          "/bin",
+          "/sbin",
+          "/lib",
+          "/lib64",
+          "/System/Library",
+          "/Library/Apple",
+          "/private/var/db/dyld",
+          "/private/etc",
+          "/etc",
+          "/dev",
+          "/Users/louwill/Library/Application Support/DoubaoWork/sandbox_runtime/bases/98670218a5f0d8bc9b9ebf3f70881304"
+        ],
+        "env": [],
+        "fallback": "env-clean",
+        "allow_loopback": true,
+        "share_dirs": [
+          "node_modules"
+        ]
+      }
+    },
+    "brief_sha256": "5de3904e89a2de95c9b6ac96fd33c75ad26c6a000dc38ec5674b6c5b91444a6f",
+    "schema_sha256": "9451e0d6d4e0ac10971c9035a04b4fffd1e054d82444c9a1bd4742d8dcf5eff6"
+  },
+  "input_sha256": "9233a37b9cc0a81ca90734fbce8f1d89e1ef6747d721b47896dd3cf4a0332f90"
+}
