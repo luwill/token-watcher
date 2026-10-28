@@ -1,0 +1,43 @@
+{
+  "verdict": "approve",
+  "summary": "Targets-only request for stage 2 (scope: mutant targets and detector weaknesses). This review does not judge the stage code; it specifies the adversary-selected concrete mutation targets for criterion C2 before the mutant wave. No blocking findings. The run must record which target the actual mutant implements and keep at least one KILLED mutant per target selected.",
+  "limits": "snapshot-only; no command reproduction; no OS sandbox; reviewer: same model family as the author (local, no codex CLI, no cloud)",
+  "findings": [
+    {
+      "title": "C2 mutant target: dedup_key 丢失 identity（去重收成一条）",
+      "confidence": 0.9,
+      "severity": "minor",
+      "file": "src/collectors/doubao.js",
+      "line_start": 183,
+      "line_end": 183,
+      "why_vulnerable": "dedup_key 由 tool、conversation、identity（message_id 或摘要）三段构成，是 WAL/.ldb/.blob 三处副本与多轮回复收成单条的唯一依据；去掉 identity 后同一 conversation 的多轮回复互相去重，重扫不幂等、事件数缩水，且不会被外置值/无关值干扰发现。",
+      "what_goes_wrong": "把 dedup_key 改成 `${tool}:${conversation ?? '-'}`：同一 conversation 下第二条回复的 insertEvent 命中已有行返回 0 → collect 三文件计数、Scanner 重扫幂等、以及 ev('doubao:conv-wal:msg-wal') 等落库断言全部失败。",
+      "how_to_confirm": "改该行后运行 test/doubao-leveldb.mjs（或 npm test）：'collect 三文件插入计数'、'collect 重扫幂等'、'Scanner 重扫幂等' 断言应出现 ✗，且事件总数从 4 掉到 3。",
+      "recommendation": "mutant 破坏该行并断言失败（KILLED）；该行若恢复则断言全绿。"
+    },
+    {
+      "title": "C2 mutant target: WAL 跨块分片重组只保留末片",
+      "confidence": 0.85,
+      "severity": "minor",
+      "file": "src/v8leveldb.js",
+      "line_start": 148,
+      "line_end": 160,
+      "why_vulnerable": "walRecords 对 FIRST/MIDDLE/LAST 的拼接是 32KB 以上 write batch（豆包工作多轮任务状态常见）能还原的唯一路径；若 MIDDLE/LAST 改为覆盖而非追加，跨块记录会截断成最后一片，batchValues 只解析出尾部 entries。",
+      "what_goes_wrong": "把 LAST 分支的 append 改成赋值：跨 32KB fixture 里 big batch 的批次头（seq/count）落在第一片 → 尾片被当作新 batch 解析 → 'WAL 跨块 FIRST/LAST 重组' 断言 recs[0].equals(big) 失败，且 collect WAL 计数受影响。",
+      "how_to_confirm": "改 walRecords 重组逻辑后运行 test/doubao-leveldb.mjs：'WAL 跨块 FIRST/LAST 重组' 断言应 ✗。",
+      "recommendation": "mutant 破坏重组逻辑并断言失败（KILLED）。"
+    },
+    {
+      "title": "C2 mutant target: 值级 snappy 不解压直接返回",
+      "confidence": 0.85,
+      "severity": "minor",
+      "file": "src/v8leveldb.js",
+      "line_start": 140,
+      "line_end": 150,
+      "why_vulnerable": "IndexedDB 值可能被值级 snappy（ff 11 02）包装；collectDoubaoFile 的快筛必须在解包之后（压缩值里看不到 context_window_usage 明文）。若 unwrap 的 0x02 分支不解压而原样返回，压缩值全部被快筛跳过。",
+      "what_goes_wrong": "把 ff 11 02 分支改成 return raw：值级 snappy 的事件永远取不到 → 'decode 值级 snappy (ff 11 02)' 断言失败；若 fixture 里 WAL/ldb 的值改用 snappyValue，collect 计数与落库断言也会失败。",
+      "how_to_confirm": "改 unwrapIndexedDbValue 后运行 test/doubao-leveldb.mjs：'decode 值级 snappy' 断言应 ✗。",
+      "recommendation": "mutant 破坏该分支并断言失败（KILLED）。"
+    }
+  ]
+}
