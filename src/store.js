@@ -118,7 +118,8 @@ function migrate(db, dbPath) {
 
 /** 采集器可能调用的全部写方法：stageWrites() 代理这些，其余（读）直通 */
 const STAGED_WRITES = ['insertEvent', 'insertDshEvent', 'insertToolCall', 'insertCredit',
-  'saveQuota', 'dropStaleCodexRows', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent'];
+  'saveQuota', 'dropStaleCodexRows', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent',
+  'upsertHermesEvent'];
 
 export class Store {
   constructor(dbPath) {
@@ -155,6 +156,14 @@ export class Store {
       ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
       cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?, usage_quality = ?
       WHERE dedup_key = ? AND tool = 'claude-code'`);
+    // Hermes 的 session_model_usage 是「原地累加更新」的聚合行（非分片、非纯追加）：每次读到的
+    // 都是该聚合自首次以来的完整累计快照。语义与 insertEvent 的 supersede（仅在 output 更大时补齐，
+    // 为「同响应分片」设计）不同——这里任何一项（input/cache/output）增长都必须整行覆盖，否则
+    // 「输入/缓存增长但输出不变」的累计（如重试、追加压缩）会被静默丢弃。覆盖式，不比较大小。
+    this._updateHermesEvent = this.db.prepare(`UPDATE events SET
+      ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
+      cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?
+      WHERE dedup_key = ? AND tool = 'hermes'`);
     this._insertToolCall = this.db.prepare(`
       INSERT OR IGNORE INTO tool_calls (ts, tool, name, session_id, dedup_key)
       VALUES (?, ?, ?, ?, ?)`);
@@ -311,6 +320,29 @@ export class Store {
   }
 
   /**
+   * Hermes 聚合行的覆盖式 upsert：session_model_usage 每轮被重读时，携带的是该聚合的完整
+   * 累计快照。dedup_key 稳定（聚合身份哈希），故命中同一行；任何字段变化都整行覆盖。
+   * 返回 1 仅当这是一条全新事件（行数增加）；覆盖已有行返回 0（与 insertEvent 语义一致，
+   * 避免每轮重扫把同一聚合反复计入"新增"）。
+   */
+  upsertHermesEvent(e) {
+    if (e.tool !== 'hermes') throw new Error('invalid Hermes event');
+    const n = this._insertEvent.run(
+      e.ts, e.tool, e.model ?? null, e.session_id ?? null, e.project ?? null,
+      e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
+      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
+      e.dedup_key, e.trace_id ?? null,
+    ).changes;
+    this._updateHermesEvent.run(
+      e.ts, e.model ?? null, e.session_id ?? null, e.project ?? null,
+      e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
+      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
+      e.dedup_key,
+    );
+    return n;
+  }
+
+  /**
    * 采集器专用的写入代理：写操作先按顺序记下，解析（含异步读文件、解压）结束后由扫描器
    * 在一个同步事务里 replay()。事务因此从不跨 await——同一连接上的轮询器 / 设置写入
    * 不会被卷进采集事务、被它的回滚一起撤销；写锁也只在回放那一刻持有，不挡并发的 CLI。
@@ -329,7 +361,7 @@ export class Store {
       const before = this.db.prepare('SELECT total_changes() n').get().n;
       for (const [name, args] of ops) {
         const r = this[name](...args);
-        if (['insertEvent', 'insertDshEvent', 'upsertAntigravityEvent', 'upsertClaudeEvent'].includes(name)) inserted += r;
+        if (['insertEvent', 'insertDshEvent', 'upsertAntigravityEvent', 'upsertClaudeEvent', 'upsertHermesEvent'].includes(name)) inserted += r;
       }
       changed = this.db.prepare('SELECT total_changes() n').get().n > before;
       return inserted;
