@@ -82,7 +82,7 @@ export function installDeviceTracking(store) {
   migrateDevices(store.db);
   store._deviceTracking = true;
   store._deviceContext = 'local';
-  for (const [table, methods] of [['events', ['insertEvent', 'insertDshEvent', 'upsertClaudeEvent', 'upsertAntigravityEvent']],
+  for (const [table, methods] of [['events', ['insertEvent', 'insertDshEvent', 'upsertClaudeEvent', 'upsertAntigravityEvent', 'upsertHermesEvent']],
     ['tool_calls', ['insertToolCall']], ['credit_usage', ['insertCredit']]]) {
     const tag = store.db.prepare(`UPDATE ${table} SET device = ? WHERE dedup_key = ? AND device = 'unknown'`);
     for (const name of methods) {
