@@ -550,3 +550,23 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 ## License
 
 [MIT](LICENSE)
+
+### 可配置用量告警
+
+面板顶部展开 **告警设置**，可逐条修改启用状态、警告/严重阈值，保存或恢复默认。
+阈值留空表示不设置该级别。服务端统一求值，网页显示告警横幅，菜单栏显示当前告警；
+菜单栏只在同一条件级别上升时发系统通知，条件消失后重置，每 30 秒轮询生效。
+
+配置保存在 `~/.tokenmeter/alerts.json`，结构为 `{ "version": 1, "rules": [...] }`。
+每条规则含 `id`、`metric`、`enabled`、`warn`、`crit`；余额规则可加 `provider`，
+匹配余额 id 或 provider 名称。默认 Codex 已用 **80/95%**，余额 **低于 10/2**
+（使用该余额自身币种）；`today_tokens`、`claude_5h_tokens` 默认禁用且阈值为 null。
+用量类达到阈值（`>=`）触发，余额低于（`<`）触发。阈值须为有限非负数，百分比不超过 100；
+启用时至少有一个阈值，用量类 warn ≤ crit，余额 warn ≥ crit。
+
+配置不存在时使用默认值、不自动写盘；损坏时回落默认并显示 `config_error`。
+`GET /api/alerts/config` 返回 `{config, defaults, config_error}`；`PUT` 完整替换配置，
+原子写入后推送 SSE update。写入要求 JSON、本机 Host、若带 Origin 也须为本机来源，
+请求体上限 64 KiB。`/api/summary.alerts` 返回 `items`、`config_error` 和生效的 `rules`
+（用于 Codex 进度条配色）。缺数据不告警。今日 Tokens 随网页设备筛选变化，菜单栏使用全部设备；
+配额和余额均为账户级。多条同指标规则使用独立通知键。

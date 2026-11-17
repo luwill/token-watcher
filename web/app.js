@@ -99,8 +99,10 @@ function clearEmpty(key) {
 }
 
 /** 配额进度条：按阈值整体换色（lv-ok/lv-warn/lv-hot 见 style.css） */
-const qBar = (used) => {
-  const lv = used >= 90 ? 'lv-hot' : used >= 70 ? 'lv-warn' : 'lv-ok';
+const qBar = (used, metric = null) => {
+  const rules = (lastSummary?.alerts?.rules || []).filter(r => r.metric === metric && r.enabled);
+  const lv = rules.some(r => r.crit !== null && used >= r.crit) ? 'lv-hot'
+    : rules.some(r => r.warn !== null && used >= r.warn) ? 'lv-warn' : rules.length || metric === null ? 'lv-ok' : 'lv-neutral';
   return `<div class="q-bar"><div class="q-fill ${lv}" style="width:${Math.min(used, 100)}%"></div></div>`;
 };
 
@@ -162,6 +164,7 @@ function render() {
   // 各组件独立容错：单个失败不连坐整页，错误记录便于排查
   window.__renderErr = [];
   const safe = (name, fn) => { try { fn(); } catch (e) { window.__renderErr.push(name + ': ' + e.message); } };
+  safe('alerts', () => renderAlerts(s.alerts));
   safe('status', () => renderStatus(s.quota, s.balances, s.wb_rates, s.recon, s.costs, s.credits));
   safe('health', () => renderHealth(s.health));
   safe('live', () => renderLive(s.live));
@@ -195,7 +198,7 @@ function renderStatus(quota, balances, rates, recon, costs, credits) {
       return `<div class="q-win">
         <div class="q-meta q-win-head"><span title="已用 ${used.toFixed(1)}%"><b>${esc(windowLabel(w.window_minutes))}</b> ${used.toFixed(1)}%</span>
           <span class="dim">重置 <b class="cd" data-at="${esc(w.resets_at)}">--</b></span></div>
-        ${qBar(used)}
+        ${qBar(used, 'codex_quota_pct')}
       </div>`;
     }).join('');
     html += `<div class="quota-card">
@@ -1150,3 +1153,66 @@ function connectSSE() {
 load();
 connectSSE();
 setInterval(load, 60_000); // 兜底轮询
+
+
+/* ---------- 告警：服务端结果 + 完整配置编辑 ---------- */
+let alertConfig = null;
+let alertDefaults = null;
+function renderAlerts(alerts) {
+  const el = document.getElementById('alerts-banner');
+  const items = alerts?.items || [];
+  el.hidden = !items.length && !alerts?.config_error;
+  el.innerHTML = items.map(a => `<div class="alert-item ${a.level === 'crit' ? 'alert-crit' : 'alert-warn'}"><b>${esc(a.title)}</b> ${esc(a.body)}</div>`).join('')
+    + (alerts?.config_error ? `<p>${esc(alerts.config_error)}</p>` : '');
+}
+function renderAlertSettings() {
+  document.getElementById('alerts-rules').innerHTML = alertConfig.rules.map((r, i) => `
+    <div class="alert-rule" data-index="${i}">
+      <label><input type="checkbox" data-field="enabled" ${r.enabled ? 'checked' : ''}> ${esc(r.metric)}${r.provider ? ' · ' + esc(r.provider) : ''} (${esc(r.id)})</label>
+      <label>警告 <input type="number" min="0" step="any" data-field="warn" value="${esc(r.warn ?? '')}"></label>
+      <label>严重 <input type="number" min="0" step="any" data-field="crit" value="${esc(r.crit ?? '')}"></label>
+    </div>`).join('');
+}
+document.getElementById('alerts-settings').addEventListener('toggle', async e => {
+  if (!e.target.open) return;
+  const message = document.getElementById('alerts-message');
+  try {
+    const res = await fetch('/api/alerts/config');
+    if (!res.ok) throw new Error(`读取失败 ${res.status}`);
+    const data = await res.json();
+    alertConfig = data.config;
+    alertDefaults = data.defaults;
+    renderAlertSettings();
+    message.textContent = data.config_error || '';
+  } catch (err) { message.textContent = err.message; }
+});
+async function saveAlertSettings(restore = false) {
+  const message = document.getElementById('alerts-message');
+  if (!alertConfig || !alertDefaults) { message.textContent = '请重新打开设置以加载配置'; return; }
+  const config = restore ? structuredClone(alertDefaults) : structuredClone(alertConfig);
+  if (!restore) {
+    for (const row of document.querySelectorAll('#alerts-rules .alert-rule')) {
+      const r = config.rules[Number(row.dataset.index)];
+      r.enabled = row.querySelector('[data-field="enabled"]').checked;
+      for (const k of ["warn", "crit"]) {
+        const input = row.querySelector(`[data-field="${k}"]`);
+        if (input.validity.badInput) { message.textContent = '阈值必须是数字'; return; }
+        r[k] = input.value.trim() === '' ? null : Number(input.value);
+      }
+    }
+  }
+  const buttons = ['alerts-save', 'alerts-reset'].map(id => document.getElementById(id));
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    const res = await fetch('/api/alerts/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+    const data = await res.json();
+    if (!res.ok) throw new Error([data.error, ...(data.details || [])].join('；'));
+    alertConfig = data.config;
+    renderAlertSettings();
+    message.textContent = restore ? '已恢复默认规则' : '已保存';
+    await load();
+  } catch (err) { message.textContent = err.message; }
+  finally { buttons.forEach(b => { b.disabled = false; }); }
+}
+document.getElementById('alerts-save').addEventListener('click', () => saveAlertSettings());
+document.getElementById('alerts-reset').addEventListener('click', () => saveAlertSettings(true));

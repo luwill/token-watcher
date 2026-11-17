@@ -22,7 +22,7 @@ struct Summary: Decodable {
       // 后端（src/codexQuota.js）输出窗口列表；平铺的 used_percent 是 1.8 之前的旧形态，留作兜底
       struct DataQ: Decodable { var windows: [Window]?; var used_percent: Double?; var plan_type: String? }
       struct Window: Decodable { var window_minutes: Double?; var used_percent: Double? }
-      /// 胶囊与告警看最紧的那个窗口（已用比例最高者）
+      /// 胶囊看最紧的那个窗口（已用比例最高者）
       var usedPercent: Double? {
         let pcts = (data?.windows ?? []).compactMap { $0.used_percent }
         return pcts.max() ?? data?.used_percent
@@ -42,6 +42,41 @@ struct Summary: Decodable {
       var window_ends_at: Double? }
   }
   struct Balance: Decodable { var provider: String?; var balance: Double?; var currency: String?; var id: String? }
+  struct AlertItem: Decodable {
+    var key: String
+    var rule_id: String
+    var metric: String
+    var level: String
+    var value: Double
+    var threshold: Double
+    var title: String
+    var body: String
+  }
+  // 每项独立解码：坏项不会让整份 summary 失效。
+  struct AlertEntry: Decodable {
+    var item: AlertItem?
+    init(from decoder: Decoder) throws {
+      let decoded = try? AlertItem(from: decoder)
+      item = decoded.flatMap { ["warn", "crit"].contains($0.level) && !$0.key.isEmpty ? $0 : nil }
+    }
+  }
+  struct Alerts: Decodable {
+    var items: [AlertItem] = []
+    init(from decoder: Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      items = ((try? c.decode([AlertEntry].self, forKey: .items)) ?? []).compactMap { $0.item }
+    }
+    enum CodingKeys: String, CodingKey { case items }
+  }
+  var alerts: Alerts?
+  enum CodingKeys: String, CodingKey { case totals, quota, balances, alerts }
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    totals = try c.decodeIfPresent(Totals.self, forKey: .totals)
+    quota = try c.decodeIfPresent(Quota.self, forKey: .quota)
+    balances = try c.decodeIfPresent([Balance].self, forKey: .balances)
+    alerts = try? c.decodeIfPresent(Alerts.self, forKey: .alerts)
+  }
   var totals: Totals?
   var quota: Quota?
   var balances: [Balance]?
@@ -78,15 +113,8 @@ final class BarApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDel
   /** 阈值通知：仅在级别上升时发一次，恢复后重置 */
   func checkThresholds() {
     guard let s = summary else { return }
-    var conditions: [(key: String, level: Int, title: String, body: String)] = []
-    if let pct = s.quota?.codex?.usedPercent {
-      if pct >= 95 { conditions.append(("codex", 2, "Codex 配额即将耗尽", String(format: "已用 %.0f%%，即将触发限速", pct))) }
-      else if pct >= 80 { conditions.append(("codex", 1, "Codex 配额偏高", String(format: "已用 %.0f%%", pct))) }
-    }
-    for b in s.balances ?? [] where b.balance != nil {
-      let key = "bal:\(b.id ?? b.provider ?? "?")"
-      if b.balance! < 2 { conditions.append((key, 2, "\(b.provider ?? "?") 余额即将耗尽", String(format: "仅剩 ¥%.2f", b.balance!))) }
-      else if b.balance! < 10 { conditions.append((key, 1, "\(b.provider ?? "?") 余额偏低", String(format: "剩余 ¥%.2f，建议充值", b.balance!))) }
+    let conditions = (s.alerts?.items ?? []).map {
+      (key: $0.key, level: $0.level == "crit" ? 2 : 1, title: $0.title, body: $0.body)
     }
     var active = Set<String>()
     for c in conditions {
@@ -150,6 +178,9 @@ final class BarApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDel
       add(String(format: "%@ 余额：¥%.2f", b.provider ?? "?", b.balance!))
     }
     menu.addItem(.separator())
+    for alert in s?.alerts?.items ?? [] {
+      add("\(alert.level == "crit" ? "‼" : "⚠") \(alert.title)：\(alert.body)")
+    }
     let open = NSMenuItem(title: "打开面板", action: #selector(openDashboard), keyEquivalent: "o")
     open.target = self
     menu.addItem(open)

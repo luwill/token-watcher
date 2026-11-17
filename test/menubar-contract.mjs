@@ -3,7 +3,7 @@
  * Decodable 遇到类型不符会整体抛错，胶囊就只剩 T--）。summary 在临时 HOME 子进程里构建。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,27 @@ export async function testMenubar(ok) {
   let summary = null;
   try { summary = JSON.parse(sr.stdout); } catch { /* 下面断言会报 */ }
   ok('临时 HOME 下构建出真实 summary', sr.status === 0 && summary, (sr.stderr || '').slice(0, 300));
-  await testMenubarContract(ok, readFileSync(new URL('../menubar/main.swift', import.meta.url), 'utf8'), summary);
+  const swift = readFileSync(new URL('../menubar/main.swift', import.meta.url), 'utf8');
+  await testMenubarContract(ok, swift, summary);
+  // 有 Swift 时真实解码：合法项夹着坏项，仍保留合法项与 totals。
+  if (spawnSync('swiftc', ['--version']).status === 0) {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-alert-swift-'));
+    try {
+      const model = swift.slice(swift.indexOf('struct Summary:'), swift.indexOf('func fmtTokens'));
+      const item = summary.alerts.items[0];
+      const payloads = [
+        { totals: { today_tokens: 7 } },
+        { totals: { today_tokens: 7 }, alerts: 'bad' },
+        { totals: { today_tokens: 7 }, alerts: { items: [null, 1, {}, { ...item, level: 'bad' }, { ...item, value: 'bad' }, item] } },
+      ];
+      const encoded = JSON.stringify(payloads).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+      writeFileSync(join(dir, 'main.swift'), `import Foundation\n${model}\nlet data = "${encoded}".data(using: .utf8)!\nlet rows = try JSONDecoder().decode([Summary].self, from: data)\nprecondition(rows.allSatisfy { $0.totals?.today_tokens == 7 })\nprecondition(rows[0].alerts == nil && rows[1].alerts == nil)\nprecondition(rows[2].alerts?.items.count == 1)\nprint("decode ok")\n`);
+      const build = spawnSync('swiftc', [join(dir, 'main.swift'), '-o', join(dir, 'decode')], { encoding: 'utf8' });
+      const run = build.status === 0 ? spawnSync(join(dir, 'decode'), [], { encoding: 'utf8' }) : build;
+      ok('Swift 真实解码容忍缺失 alerts、坏容器与单项异常', run.status === 0 && run.stdout.includes('decode ok'), run.stderr.slice(0, 400));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+
 }
 
 async function summaryChild() {
@@ -31,7 +51,7 @@ async function summaryChild() {
   st.insertEvent({ ts: now - 1000, tool: 'codex', model: 'gpt-5', total_tokens: 100, dedup_key: 's1' });
   st.insertEvent({ ts: now - 2000, tool: 'claude-code', model: 'claude-opus-5-5', session_id: 'c1', total_tokens: 50, dedup_key: 's2' });
   st.saveQuota('codex', now - 1000, quotaFromRateLimits({ limit_id: 'codex', plan_type: 'plus',
-    primary: { used_percent: 25, window_minutes: 300, resets_at: 1799990000 },
+    primary: { used_percent: 85, window_minutes: 300, resets_at: 1799990000 },
     secondary: { used_percent: 42.5, window_minutes: 10080, resets_at: 1799999999 } }));
   st.saveQuota('balance:deepseek', now - 500, { provider: 'DeepSeek', balance: 12.34, currency: 'CNY' });
   const s = await buildSummary(st, {}, 1, { now });
@@ -93,19 +113,22 @@ export async function testMenubarContract(ok, swiftSource, summary = null) {
     ok(`后端窗口带百分比（菜单栏取最大者）：${label}`, view.data.windows.length > 0
       && view.data.windows.every(w => typeof w.used_percent === 'number'), JSON.stringify(view.data));
   }
-  // 胶囊与 80/95% 告警必须看最紧的窗口，且真的从 windows 取值；标签按分钟数映射
+  // 胶囊必须看最紧的窗口，且真的从 windows 取值；标签按分钟数映射
   const usedBody = swiftSource.slice(swiftSource.indexOf('var usedPercent'), swiftSource.indexOf('var windowLines'));
   ok('菜单栏 usedPercent 从 windows 取各窗口最大值',
     /\(data\?\.windows \?\? \[\]\)\.compactMap \{ \$0\.used_percent \}/.test(usedBody)
     && /pcts\.max\(\) \?\? data\?\.used_percent/.test(usedBody), usedBody.slice(0, 200));
   ok('菜单栏窗口标签：300 分钟=5h，10080 分钟=周',
     /m == 300 \? "5h" : m == 10080 \? "周"/.test(swiftSource));
+  ok('菜单栏使用服务端告警并保留级别上升与消失重置',
+    swiftSource.includes('s.alerts?.items') && swiftSource.includes('if c.level > prev')
+    && swiftSource.includes('!active.contains(k)') && !/pct >= (80|95)|balance! < (2|10)/.test(swiftSource));
   if (summary) {
     // 真实 buildSummary 输出：Swift 声明的每个结构体逐字段比对（任何一处类型不符都会让整次解码失败）
     const paths = { Summary: [summary], Totals: [summary.totals], Quota: [summary.quota],
       CodexQ: [summary.quota.codex], DataQ: [summary.quota.codex?.data],
       Window: summary.quota.codex?.data?.windows || [], ClaudeQ: [summary.quota.claude5h],
-      Balance: summary.balances || [] };
+      Balance: summary.balances || [], AlertItem: summary.alerts.items };
     const bad = [];
     for (const [name, objs] of Object.entries(paths)) {
       const fields = structFields(name);
@@ -121,6 +144,6 @@ export async function testMenubarContract(ok, swiftSource, summary = null) {
       (summary.quota.codex?.data?.windows || []).length === 2 && (summary.balances || []).length >= 1,
       JSON.stringify({ codex: summary.quota.codex, balances: summary.balances }));
   }
-  ok('菜单栏胶囊 / 告警 / 菜单都改读窗口', !/codex\?\.data\?\.used_percent/.test(swiftSource)
-    && (swiftSource.match(/usedPercent/g) || []).length >= 3, '');
+  ok('菜单栏胶囊 / 菜单读窗口', !/codex\?\.data\?\.used_percent/.test(swiftSource)
+    && (swiftSource.match(/usedPercent/g) || []).length >= 2, '');
 }

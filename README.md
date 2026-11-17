@@ -277,3 +277,29 @@ color. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 ## License
 
 [MIT](./LICENSE)
+
+### Usage alerts
+
+Open **告警设置** (Alert settings) at the top of the dashboard to enable rules,
+edit warning/critical thresholds, save, or restore defaults. Blank thresholds disable
+that severity. The server evaluates alerts for both the web banner and macOS menu
+bar; the menu bar notifies only when a condition rises in severity and resets after
+it clears (updates on its next 30-second poll).
+
+Rules live in `~/.tokenmeter/alerts.json`: `{ "version": 1, "rules": [...] }`.
+Each rule has `id`, `metric`, `enabled`, `warn`, `crit`; balance rules may additionally
+set `provider` to a balance ID or provider name. Defaults are Codex usage **80/95%**
+(warning/critical) and balance **below 10/2** in the balance's own currency.
+`today_tokens` and `claude_5h_tokens` start disabled with null thresholds. Token and
+percentage rules trigger at `>=`; balance triggers at `<`. Enabled rules need at
+least one finite nonnegative threshold; percentages cannot exceed 100. Warning
+must be no higher than critical for usage, and no lower for balances.
+
+Missing files use defaults without writing; invalid files use defaults and display
+`config_error`. `GET /api/alerts/config` returns `{config, defaults, config_error}`;
+`PUT` replaces the complete configuration atomically and sends an SSE update.
+Writes require JSON, a local Host, and a local Origin if supplied (64 KiB maximum).
+`/api/summary.alerts` includes evaluated `items`, `config_error`, and effective `rules`
+for Codex progress colors. Missing data produces no alert. Today's tokens follow
+the dashboard device filter; the menu bar uses all devices. Quota/balance alerts
+remain account-wide. Multiple rules for one metric have distinct notification keys.

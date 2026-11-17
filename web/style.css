@@ -292,3 +292,13 @@ footer {
 .lb-chip { display: inline-block; padding: 1px 7px; margin-right: 4px; border: 1px solid var(--border);
   border-radius: 999px; font-size: 10.5px; color: var(--text-soft); white-space: nowrap; }
 .lb-foot { font-size: 11px; margin-top: 8px; }
+
+/* 告警与规则编辑 */
+.alerts-settings { padding: 14px; margin-bottom: 16px; }
+.alerts-settings summary { cursor: pointer; }
+.alert-item { padding: 12px; margin-bottom: 8px; border-left: 4px solid; }
+.alert-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.alert-crit { color: var(--hot, #ef6464); background: color-mix(in srgb, var(--hot, #ef6464) 10%, transparent); }
+.alert-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
+.alert-rule input[type="number"] { width: 110px; }
+.q-fill.lv-neutral { background: var(--muted, #888); }

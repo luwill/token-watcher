@@ -11,6 +11,7 @@ src/
   store.js               SQLite（node:sqlite）：events / files游标 / quota / rates / tool_calls / balance_history
   scanner.js             按源类型枚举 + 增量扫描 + FSEvents + 版本回填 + resume链模型继承
   server.js              HTTP API + SSE + 健康计算 + Claude 5h 推算 + 每日备份
+  alerts.js              告警规则校验 / 原子配置存储 / 纯函数求值（web 与菜单栏共用）
   balance.js             厂商余额轮询（DeepSeek/Kimi）
   pricing.js             ccmr 费用折算 + 余额对账
   rates.js               WorkBuddy 积分费率自学习（最小二乘）
@@ -343,3 +344,17 @@ pending 按事件补正，不维护相邻轮的全局差分基线；Scanner 在 
 相关回归防护：`test/run.mjs` 的静态断言层（safe() 调用的函数必须存在、DOM id 一致性）
 与端到端冒烟层（fixtures 黄金数字、幂等、API 结构）。历史事故：误删 renderLive 导致
 整页空白、roundRect 导致热力图消失——均已由测试覆盖。
+
+
+## 告警规则
+
+`src/alerts.js` 管理 DATA_DIR 下的 `alerts.json`（version 1），缺失使用默认规则，
+损坏时回落并返回不含路径的 `config_error`。`evaluateAlerts(summary, config)` 是纯函数，
+Codex 取窗口最大已用比例，余额按 id/provider 分键，Claude 5h 只看 active 窗口。
+高于型含边界，低于型不含边界；严重项优先。多个同指标规则的 key 加规则 id 以避免互相覆盖。
+
+`buildSummary` 附加 `alerts.items/config_error/rules`；网页和 Swift 不再各自定义告警阈值。
+网页使用生效 rules 给 Codex 条着色，横幅和菜单通知直接消费 items。
+`GET /api/alerts/config` 返回当前与默认配置；`PUT` 校验完整配置、临时文件写入后 rename，
+成功推一次现有 SSE update。沿用 Host 防护，额外检查 Origin、JSON 类型及 64 KiB 请求体上限。
+Swift 容忍缺失/损坏 alerts 和坏单项，保留同 key 级别上升通知、消失重置语义。

@@ -1,3 +1,4 @@
+import { defaultAlertsConfig, validateAlertsConfig, loadAlertsConfig, saveAlertsConfig, evaluateAlerts } from './alerts.js';
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -215,7 +216,7 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
   // 先算费用：对账要复用同一份汇率，两张卡才不会各说各话
   const costs = await computeCosts(db, days, { now });
 
-  return {
+  const summary = {
     generated_at: now,
     range_days: days,
     device,
@@ -257,6 +258,9 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     recon: computeRecon(store.db, store, await loadPricing(), { rate: costs.usd_to_cny }),
     recent,
   };
+  const { config, config_error } = await loadAlertsConfig();
+  summary.alerts = { items: evaluateAlerts(summary, config), config_error, rules: config.rules };
+  return summary;
 }
 
 export async function serveFile(res, path, type, { statImpl = stat } = {}) {
@@ -419,6 +423,44 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
       || p.startsWith('/api/session/');
     if (usageRoute && device === null) return json(res, 400, { error: 'invalid device' });
 
+    if (p === '/api/alerts/config') {
+      if (!['GET', 'PUT'].includes(req.method)) {
+        res.setHeader('allow', 'GET, PUT');
+        return json(res, 405, { error: 'method not allowed' });
+      }
+      if (req.method === 'GET') return json(res, 200, { ...await loadAlertsConfig(), defaults: defaultAlertsConfig() });
+      if (req.headers.origin !== undefined) {
+        let origin;
+        try { origin = new URL(req.headers.origin); } catch { /* 非 URL 来源拒绝 */ }
+        if (!origin || !['http:', 'https:'].includes(origin.protocol)
+          || !['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname)
+          || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) {
+          return json(res, 403, { error: 'forbidden origin' });
+        }
+      }
+      if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        return json(res, 400, { error: 'Content-Type 必须为 application/json', details: [] });
+      }
+      // 逐块限流；不销毁 socket，确保客户端能收到 413。
+      let size = 0;
+      const chunks = [];
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 64 * 1024) {
+          json(res, 413, { error: '请求体不可超过 64KB' });
+          return;
+        }
+        chunks.push(chunk);
+      }
+      let config;
+      try { config = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+      catch { return json(res, 400, { error: 'JSON 格式错误', details: ['请求体必须是有效 JSON'] }); }
+      const details = validateAlertsConfig(config);
+      if (details.length) return json(res, 400, { error: '告警配置校验失败', details });
+      await saveAlertsConfig(config);
+      notify();
+      return json(res, 200, { config, defaults: defaultAlertsConfig(), config_error: null });
+    }
     if (p === '/api/summary') {
       const days = parseRangeDays(url.searchParams.get('days'));
       try {
