@@ -568,5 +568,5 @@ Token Watcher 是**非官方**工具，解析的均为各产品留在本地的**
 `GET /api/alerts/config` 返回 `{config, defaults, config_error}`；`PUT` 完整替换配置，
 原子写入后推送 SSE update。写入要求 JSON、本机 Host、若带 Origin 也须为本机来源，
 请求体上限 64 KiB。`/api/summary.alerts` 返回 `items`、`config_error` 和生效的 `rules`
-（用于 Codex 进度条配色）。缺数据不告警。今日 Tokens 随网页设备筛选变化，菜单栏使用全部设备；
-配额和余额均为账户级。多条同指标规则使用独立通知键。
+（用于 Codex 进度条配色）。缺数据不告警。今日 Tokens、配额和余额告警
+均按账户级（全部设备）求值，网页切换设备筛选不改变告警结论。多条同指标规则使用独立通知键。

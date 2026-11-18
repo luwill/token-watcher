@@ -70,11 +70,31 @@ export async function testAlerts(ok) {
     const together = evaluateAlerts(codex(99), { version: 1, rules: [rule, defaults.rules[0]] });
     assert.equal(alone[0].key, together[0].key);
   });
+  check('超长配额窗口列表不会因参数展开抛 RangeError', () => {
+    const windows = Array.from({ length: 300_000 }, (_, i) => ({ used_percent: i === 7 ? 96 : 1 }));
+    assert.equal(evaluateAlerts({ quota: { codex: { data: { windows } } } }, defaults)[0].level, 'crit');
+  });
+  check('告警正文：余额带币种两位小数，配额带百分号，tokens 千分位', () => {
+    const [bal] = evaluateAlerts({ balances: [{ id: 'ds', provider: 'DeepSeek', balance: 1.5, currency: 'CNY' }] }, defaults);
+    assert.ok(bal.body.includes('¥1.50') && bal.body.includes('¥2.00'), bal.body);
+    const [usd] = evaluateAlerts({ balances: [{ id: 'o', balance: 3, currency: 'USD' }] }, defaults);
+    assert.ok(usd.body.includes('$3.00'), usd.body);
+    assert.ok(evaluateAlerts(codex(96.25), defaults)[0].body.includes('96.3%'));
+    const [tok] = evaluateAlerts({ totals: { today_tokens: 1234567 } }, cfg({ metric: 'today_tokens', warn: 1000, crit: null }));
+    assert.ok(tok.body.includes('1,234,567'), tok.body);
+  });
+  const { alertsView } = await import('../src/alerts.js');
+  check('求值异常只清空告警，不抛出', () => {
+    const view = alertsView({}, { config: { version: 1, rules: null }, config_error: 'x' });
+    assert.deepEqual(view.items, []);
+    assert.equal(view.config_error, 'x');
+    assert.ok(view.eval_error);
+  });
   const app = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
   const { esc } = await import('../web/lib/format.js');
   const elements = { 'alerts-banner': {}, 'alerts-rules': {} };
   const context = vm.createContext({ esc, document: { getElementById: id => elements[id] } });
-  vm.runInContext(`let lastSummary; let alertConfig; ${app.match(/const qBar = [\s\S]*?\n};/)[0]}
+  vm.runInContext(`let lastSummary; let alertConfig; ${app.match(/const DISPLAY_WARN_PCT[\s\S]*?const qBar = [\s\S]*?\n};/)[0]}
     ${app.match(/function renderAlerts\([\s\S]*?\n}/)[0]}
     ${app.match(/function renderAlertSettings\([\s\S]*?\n}/)[0]}`, context);
   check('网页按配置配色、禁用中性且告警文本转义', () => {
@@ -84,6 +104,10 @@ export async function testAlerts(ok) {
     assert.ok(vm.runInContext("qBar(95, 'codex_quota_pct')", context).includes('lv-hot'));
     vm.runInContext('lastSummary.alerts.rules = []', context);
     assert.ok(vm.runInContext("qBar(99, 'codex_quota_pct')", context).includes('lv-neutral'));
+    // 无规则对应的配额条（Claude 官方 / GLM）保留展示用 70/90，不能一律画成健康绿
+    assert.ok(vm.runInContext('qBar(96)', context).includes('lv-hot'));
+    assert.ok(vm.runInContext('qBar(75)', context).includes('lv-warn'));
+    assert.ok(vm.runInContext('qBar(10)', context).includes('lv-ok'));
     vm.runInContext(`renderAlerts({items:[{title:'<img src=x>',body:'<script>x</script>',level:'crit'}]})`, context);
     assert.ok(!elements['alerts-banner'].innerHTML.includes('<img'));
     assert.ok(elements['alerts-banner'].innerHTML.includes('&lt;script&gt;'));
@@ -175,6 +199,18 @@ export async function testAlerts(ok) {
     check('恰好 64 KiB 的有效请求允许保存', () => assert.equal(res.status, 200));
     res = await request('PUT'); await res.text();
     check('无 Origin 的本机客户端允许写入', () => assert.equal(res.status, 200));
+    // 今日 tokens 告警按全部设备统计：网页切到单设备时，与菜单栏（全部设备）结论一致
+    const { buildSummary } = await import('../src/server.js');
+    const insert = store.db.prepare('INSERT INTO events (ts, tool, total_tokens, dedup_key, device) VALUES (?, ?, ?, ?, ?)');
+    insert.run(Date.now(), 'claude', 600, 'alerts-dev-local', 'local');
+    insert.run(Date.now(), 'codex', 600, 'alerts-dev-win', 'windows');
+    const todayCfg = { version: 1, rules: [{ id: 'today_tokens', metric: 'today_tokens', enabled: true, warn: 1000, crit: null }] };
+    res = await request('PUT', JSON.stringify(todayCfg)); await res.text();
+    const scoped = await buildSummary(store, {}, 1, { device: 'local' });
+    check('单设备视图的今日 tokens 告警仍按全部设备求值', () => {
+      assert.ok(scoped.totals.today_tokens < 1000);
+      assert.equal(scoped.alerts.items.find(i => i.metric === 'today_tokens')?.value, 1200);
+    });
   } finally {
     stream?.destroy(); server.closeAllConnections();
     await new Promise(resolve => server.close(resolve)); store.close();

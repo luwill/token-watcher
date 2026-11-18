@@ -98,11 +98,15 @@ function clearEmpty(key) {
   if (el && el.classList.contains('empty')) { el.classList.remove('empty'); delete el.dataset.empty; }
 }
 
-/** 配额进度条：按阈值整体换色（lv-ok/lv-warn/lv-hot 见 style.css） */
+/** 无告警规则的配额条（Claude 官方窗口 / GLM）仅用于展示配色的阈值，不产生告警 */
+const DISPLAY_WARN_PCT = 70;
+const DISPLAY_HOT_PCT = 90;
+/** 配额进度条：按阈值整体换色（lv-ok/lv-warn/lv-hot 见 style.css）。传 metric 时跟随该告警规则 */
 const qBar = (used, metric = null) => {
-  const rules = (lastSummary?.alerts?.rules || []).filter(r => r.metric === metric && r.enabled);
+  const rules = metric === null ? [{ warn: DISPLAY_WARN_PCT, crit: DISPLAY_HOT_PCT }]
+    : (lastSummary?.alerts?.rules || []).filter(r => r.metric === metric && r.enabled);
   const lv = rules.some(r => r.crit !== null && used >= r.crit) ? 'lv-hot'
-    : rules.some(r => r.warn !== null && used >= r.warn) ? 'lv-warn' : rules.length || metric === null ? 'lv-ok' : 'lv-neutral';
+    : rules.some(r => r.warn !== null && used >= r.warn) ? 'lv-warn' : rules.length ? 'lv-ok' : 'lv-neutral';
   return `<div class="q-bar"><div class="q-fill ${lv}" style="width:${Math.min(used, 100)}%"></div></div>`;
 };
 
@@ -1196,8 +1200,10 @@ async function saveAlertSettings(restore = false) {
       r.enabled = row.querySelector('[data-field="enabled"]').checked;
       for (const k of ["warn", "crit"]) {
         const input = row.querySelector(`[data-field="${k}"]`);
-        if (input.validity.badInput) { message.textContent = '阈值必须是数字'; return; }
-        r[k] = input.value.trim() === '' ? null : Number(input.value);
+        const value = input.value.trim() === '' ? null : Number(input.value);
+        // 1e309 → Infinity 不算 badInput，JSON.stringify 又会把它悄悄变成 null，必须本地拦下
+        if (input.validity.badInput || (value !== null && !Number.isFinite(value))) { message.textContent = '阈值必须是有限数字'; return; }
+        r[k] = value;
       }
     }
   }

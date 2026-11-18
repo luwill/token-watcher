@@ -298,7 +298,7 @@ footer {
 .alerts-settings summary { cursor: pointer; }
 .alert-item { padding: 12px; margin-bottom: 8px; border-left: 4px solid; }
 .alert-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
-.alert-crit { color: var(--hot, #ef6464); background: color-mix(in srgb, var(--hot, #ef6464) 10%, transparent); }
+.alert-crit { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); }
 .alert-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
 .alert-rule input[type="number"] { width: 110px; }
-.q-fill.lv-neutral { background: var(--muted, #888); }
+.q-fill.lv-neutral { background: var(--dim); }

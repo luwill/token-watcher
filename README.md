@@ -300,6 +300,6 @@ Missing files use defaults without writing; invalid files use defaults and displ
 `PUT` replaces the complete configuration atomically and sends an SSE update.
 Writes require JSON, a local Host, and a local Origin if supplied (64 KiB maximum).
 `/api/summary.alerts` includes evaluated `items`, `config_error`, and effective `rules`
-for Codex progress colors. Missing data produces no alert. Today's tokens follow
-the dashboard device filter; the menu bar uses all devices. Quota/balance alerts
-remain account-wide. Multiple rules for one metric have distinct notification keys.
+for Codex progress colors. Missing data produces no alert. Today's-token, quota and
+balance alerts are all evaluated account-wide (all devices), so the dashboard device
+filter does not change alert results. Multiple rules for one metric have distinct notification keys.

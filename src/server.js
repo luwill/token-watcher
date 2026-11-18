@@ -1,4 +1,4 @@
-import { defaultAlertsConfig, validateAlertsConfig, loadAlertsConfig, saveAlertsConfig, evaluateAlerts } from './alerts.js';
+import { defaultAlertsConfig, validateAlertsConfig, loadAlertsConfig, saveAlertsConfig, alertsView } from './alerts.js';
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -258,8 +258,10 @@ export async function buildSummary(store, scannerStats, days, { balanceStatus = 
     recon: computeRecon(store.db, store, await loadPricing(), { rate: costs.usd_to_cny }),
     recent,
   };
-  const { config, config_error } = await loadAlertsConfig();
-  summary.alerts = { items: evaluateAlerts(summary, config), config_error, rules: config.rules };
+  // 告警是账户级结论：今日 tokens 始终按全部设备求值，网页切单设备时与菜单栏（全部设备）一致
+  const allToday = device === 'all' ? summary.totals.today_tokens
+    : store.db.prepare('SELECT SUM(total_tokens) total FROM events WHERE ts >= ?').get(todayStart).total || 0;
+  summary.alerts = alertsView({ ...summary, totals: { ...summary.totals, today_tokens: allToday } }, await loadAlertsConfig());
   return summary;
 }
 
