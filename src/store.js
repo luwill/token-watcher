@@ -4,6 +4,7 @@ import { canonicalCodexKey, migrateCodexKeys, offloadCodexKeyArchive } from './c
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { installDeviceTracking } from './deviceTracking.js';
+import { localDayStart } from './timeRange.js';
 
 /**
  * 归一化事件模型：
@@ -121,6 +122,8 @@ const STAGED_WRITES = ['insertEvent', 'insertDshEvent', 'insertToolCall', 'inser
   'saveQuota', 'dropStaleCodexRows', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent',
   'upsertHermesEvent'];
 
+const HERMES_TOKEN_FIELDS = ['input_tokens', 'cached_input', 'cache_write', 'output_tokens', 'reasoning_tokens'];
+
 export class Store {
   constructor(dbPath) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -156,10 +159,12 @@ export class Store {
       ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
       cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?, usage_quality = ?
       WHERE dedup_key = ? AND tool = 'claude-code'`);
-    // Hermes 的 session_model_usage 是「原地累加更新」的聚合行（非分片、非纯追加）：每次读到的
-    // 都是该聚合自首次以来的完整累计快照。语义与 insertEvent 的 supersede（仅在 output 更大时补齐，
-    // 为「同响应分片」设计）不同——这里任何一项（input/cache/output）增长都必须整行覆盖，否则
-    // 「输入/缓存增长但输出不变」的累计（如重试、追加压缩）会被静默丢弃。覆盖式，不比较大小。
+    // The fixed-length aggregate key also matches the first (including legacy) bucket.
+    // ':' starts its daily suffixes; ';' is the exclusive upper bound in the unique key index.
+    this._hermesBuckets = this.db.prepare(`SELECT dedup_key, ts, model, project,
+      input_tokens, cached_input, cache_write, output_tokens, reasoning_tokens
+      FROM events WHERE dedup_key >= ? AND dedup_key < ? AND +tool = 'hermes'
+      ORDER BY ts DESC`);
     this._updateHermesEvent = this.db.prepare(`UPDATE events SET
       ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
       cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?
@@ -319,27 +324,37 @@ export class Store {
     return n;
   }
 
-  /**
-   * Hermes 聚合行的覆盖式 upsert：session_model_usage 每轮被重读时，携带的是该聚合的完整
-   * 累计快照。dedup_key 稳定（聚合身份哈希），故命中同一行；任何字段变化都整行覆盖。
-   * 返回 1 仅当这是一条全新事件（行数增加）；覆盖已有行返回 0（与 insertEvent 语义一致，
-   * 避免每轮重扫把同一聚合反复计入"新增"）。
-   */
+  /** Attribute newly observed Hermes usage to the local day of the source snapshot. */
   upsertHermesEvent(e) {
     if (e.tool !== 'hermes') throw new Error('invalid Hermes event');
-    const n = this._insertEvent.run(
-      e.ts, e.tool, e.model ?? null, e.session_id ?? null, e.project ?? null,
-      e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
-      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
-      e.dedup_key, e.trace_id ?? null,
-    ).changes;
+    const buckets = this._hermesBuckets.all(e.dedup_key, e.dedup_key + ';');
+    const latest = buckets[0];
+    if (latest && latest.ts > e.ts) return 0; // an older scan can finish replaying later
+
+    const dayStart = localDayStart(e.ts);
+    const today = latest && latest.ts >= dayStart ? latest : null;
+    const earlier = today ? buckets.slice(1) : buckets;
+    const daily = { ...e };
+    for (const field of HERMES_TOKEN_FIELDS) {
+      const booked = earlier.reduce((sum, bucket) => sum + bucket[field], 0);
+      // last_seen is rounded to milliseconds; equal timestamps may replay out of order.
+      const floor = today?.ts === e.ts ? today[field] : 0;
+      daily[field] = Math.max(floor, (e[field] ?? 0) - booked);
+    }
+    daily.total_tokens = daily.input_tokens + daily.cached_input + daily.cache_write + daily.output_tokens;
+
+    if (!today) {
+      if (!daily.total_tokens && !daily.reasoning_tokens) return 0;
+      if (latest) daily.dedup_key = e.dedup_key + ':' + dayStart;
+      return this.insertEvent(daily); // tags the actual daily key with the source device
+    }
+    if (today.ts === e.ts && today.model === e.model && today.project === e.project &&
+        HERMES_TOKEN_FIELDS.every(field => today[field] === daily[field])) return 0;
     this._updateHermesEvent.run(
-      e.ts, e.model ?? null, e.session_id ?? null, e.project ?? null,
-      e.input_tokens || 0, e.cached_input || 0, e.cache_write || 0,
-      e.output_tokens || 0, e.reasoning_tokens || 0, e.total_tokens || 0,
-      e.dedup_key,
+      e.ts, e.model ?? null, e.session_id ?? null, e.project ?? null, daily.input_tokens, daily.cached_input,
+      daily.cache_write, daily.output_tokens, daily.reasoning_tokens, daily.total_tokens, today.dedup_key,
     );
-    return n;
+    return 0;
   }
 
   /**

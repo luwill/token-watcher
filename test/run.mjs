@@ -1292,14 +1292,13 @@ console.log('\n[5] 增量续写');
 {
   const hDb = join(HOME, '.hermes', 'state.db');
   // 把该聚合行原地累加（input +500, cache_read +300，output 不变——正是 supersede 抓不到的形态），
-  // 并把 last_seen 推到最新，确保落进增量窗口被重读。
+  // 沿用当前 last_seen，在回看窗口内验证同日增长（不依赖测试运行时距午夜有多久）。
   {
     const h = new DatabaseSync(hDb);
-    const bumpTo = h.prepare(`SELECT MAX(last_seen) m FROM session_model_usage`).get().m + 1000;
     h.prepare(`UPDATE session_model_usage
         SET input_tokens = input_tokens + 500, cache_read_tokens = cache_read_tokens + 300,
-            api_call_count = api_call_count + 1, last_seen = ?
-      WHERE session_id='s-hm' AND billing_base_url='https://api.example.com/v1' AND task=''`).run(bumpTo);
+            api_call_count = api_call_count + 1
+      WHERE session_id='s-hm' AND billing_base_url='https://api.example.com/v1' AND task=''`).run();
     h.close();
   }
   ok('累加增长后 scan 退出码 0', cli(['scan']).status === 0);

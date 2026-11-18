@@ -19,9 +19,9 @@ import { normalizeModel } from '../models.js';
  *     （同 OpenCode message 表的教训：rowid 水位会越过"已插入未完成"的行）。
  *     每轮回看 LOOKBACK 兜住乱序提交。
  *
- *  3. dedup_key 取聚合身份的**稳定哈希**（不含数值）：同一聚合行每轮被重读时命中同一条
- *     event，由 store.insertEvent 的"输出更大的后来者补齐"语义把累计快照刷新到最新值，
- *     既不重复计数、又能跟随上游增长。
+ *  3. 稳定哈希标识同一聚合。store 保留已观测到的历史，在 last_seen 的本地自然日
+ *     只入账余量。首次扫描或间隔多天时，上游没有逐日明细，未观测的增量只能归到
+ *     最后一次更新日；无法还原两次观测之间逐日或逐请求的用量。
  *
  * 口径：与库内统一公式一致 —— total = input + cached_input + cache_write + output，
  * reasoning_tokens 只作信息列**不再加进 total**（Hermes 单列 reasoning，已含在 output 内）。
@@ -31,7 +31,7 @@ import { normalizeModel } from '../models.js';
 
 const LOOKBACK_MS = 60_000; // last_seen 回看窗，兜多写入方乱序提交（同 OpenCode）
 
-/** 聚合身份 → 稳定 dedup_key（数值变化不改键，才能命中"补齐"而非新插一行） */
+/** 聚合身份 → 稳定键；同一聚合的所有日用量共用此前缀。 */
 function aggKey(r) {
   const id = [r.session_id, r.model, r.billing_provider, r.task, r.billing_mode, r.billing_base_url]
     .map(x => (x == null ? '' : String(x))).join('\u0000');
