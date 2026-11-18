@@ -1,7 +1,7 @@
 {
   "name": "token-watcher",
-  "version": "1.9.6",
-  "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build, Pi, OpenCode, Antigravity, Kimi Code, Qoder, Cursor)",
+  "version": "1.9.7",
+  "description": "Local real-time token usage & quota dashboard for AI coding agents (Claude Code, ccmr, Codex, ZCode, dsh, WorkBuddy, Grok Build, Pi, OpenCode, Antigravity, Kimi Code, Qoder, Cursor, Hermes Agent)",
   "keywords": [
     "token",
     "usage",
@@ -71,6 +71,7 @@
     "docs/DEVICE-FILTER.md",
     "docs/WINDOWS-LAN-SYNC.md",
     "docs/RELEASE-1.9.6.md",
+    "docs/RELEASE-1.9.7.md",
     "scripts/windows-usage-export.mjs",
     "scripts/windows-usage-sync.mjs",
     "scripts/setup-windows-sync.ps1",

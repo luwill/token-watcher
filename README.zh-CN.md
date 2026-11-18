@@ -8,7 +8,7 @@
 
 > 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
-## 支持的工具（13 源）
+## 支持的工具（14 源）
 
 | 工具 | 数据位置 | 能看到什么 |
 |---|---|---|
@@ -20,6 +20,7 @@
 | WorkBuddy | `~/.WorkBuddy/projects` | 逐请求明细 + **积分费率自学习**（credit 账本 × token 最小二乘） |
 | Grok Build | `~/.grok/sessions` | 轮次用量明细（含厂商侧成本刻度）、工具调用 |
 | Pi | `~/.pi/agent/sessions` | 逐请求明细、工具调用（会话 JSONL 自带 USD 成本明细） |
+| Hermes Agent | `~/.hermes/state.db` | 会话与模型累计用量、工具调用。每次观测到的增量按源数据更新的本地日期入账。 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 逐请求明细（message 表）、工具调用 |
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | 新版逐轮真实输入/缓存/输出；旧日志按完整上下文和字符估算 |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | 逐轮明细（step.end 用量，camelCase/Anthropic/OpenAI 兼容三形状自适应） |
