@@ -219,6 +219,7 @@ th.num { color: var(--dim); }
 .badge.qoder { color: #b98a68; background: rgba(156,102,68,.16); }
 .badge.cursor { color: #f2cc8f; background: rgba(242,204,143,.12); }
 .badge.antigravity { color: #a9a3b8; background: rgba(109,104,117,.18); }
+.badge.hermes { color: #d946ef; background: rgba(217,70,239,.12); }
 /* 浅色底徽章：同色相加深到 11px 小字可读的对比度，与 app.js LIGHT_TOOL_COLORS 同步维护 */
 [data-theme="light"] .badge.claude-code { color: #b4533a; background: rgba(180,83,58,.12); }
 [data-theme="light"] .badge.ccmr { color: #6d5bd0; background: rgba(109,91,208,.12); }
@@ -233,6 +234,7 @@ th.num { color: var(--dim); }
 [data-theme="light"] .badge.qoder { color: #7d5236; background: rgba(125,82,54,.14); }
 [data-theme="light"] .badge.cursor { color: #7d6412; background: rgba(125,100,18,.12); }
 [data-theme="light"] .badge.antigravity { color: #4f4a5c; background: rgba(79,74,92,.14); }
+[data-theme="light"] .badge.hermes { color: #a21caf; background: rgba(162,28,175,.12); }
 
 .rates-card { min-width: 0; }
 .rates-table { width: 100%; font-size: 12px; }

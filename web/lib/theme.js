@@ -10,6 +10,9 @@ export const TOOL_COLORS = {
   'zcode': '#f2c14e', 'dsh': '#4ea8de', 'workbuddy': '#f78fb3', 'grok': '#e6edf3',
   'pi': '#2dd4bf', 'opencode': '#ff8c42',
   'antigravity': '#6d6875', 'kimi': '#95d5b2', 'qoder': '#9c6644', 'cursor': '#f2cc8f',
+  // hermes(#d946ef 品红)：在深色底上对全集 14 色算 CIEDE2000（含红盲/绿盲模拟），
+  // 加入后正常视觉最差配对仍是原有的 cursor/zcode ΔE 8.88（未被拉低），满足"不比现状更差"。
+  'hermes': '#d946ef',
 };
 
 export const TOOL_LABEL = {
@@ -17,6 +20,7 @@ export const TOOL_LABEL = {
   'zcode': 'ZCode', 'dsh': 'dsh', 'workbuddy': 'WorkBuddy', 'grok': 'Grok',
   'pi': 'Pi', 'opencode': 'OpenCode',
   'antigravity': 'Antigravity', 'kimi': 'Kimi Code', 'qoder': 'Qoder', 'cursor': 'Cursor',
+  'hermes': 'Hermes',
 };
 
 // 深色底 #14141c 上经 validate_palette.js 校验的 8 槽分类色板：

@@ -70,6 +70,48 @@ export async function testDateRanges(ok) {
       assert.equal(sum((await buildSummary(store, {}, 0, { now })).by_day), 155);
     });
 
+    await check('Hermes 跨午夜后保留首日 1000，次日只计新增 500，重放幂等', async () => {
+      const store = makeStore('hermes-days');
+      const midnight = new Date(2026, 10, 18).getTime();
+      const first = {
+        tool: 'hermes', session_id: 'overnight', model: 'kimi-k3', project: 'fixture',
+        dedup_key: 'hermes:smu:0123456789abcdef0123', ts: midnight - 1,
+        input_tokens: 600, cached_input: 200, cache_write: 100, output_tokens: 100,
+        reasoning_tokens: 40, total_tokens: 1000,
+      };
+      const replay = snapshot => {
+        const stage = store.stageWrites({ device: 'windows' });
+        stage.store.upsertHermesEvent(snapshot);
+        return stage.replay();
+      };
+      // The previous collector stored a single, unsuffixed cumulative event.
+      const seed = store.stageWrites({ device: 'windows' });
+      seed.store.insertEvent(first);
+      seed.replay();
+      assert.equal(replay(first), 0);
+      const next = { ...first, ts: midnight, input_tokens: 800, total_tokens: 1200 };
+      assert.equal(replay(next), 1);
+      const final = { ...next, ts: midnight + 1000, cached_input: 350, cache_write: 150,
+        output_tokens: 200, reasoning_tokens: 60, total_tokens: 1500 };
+      assert.equal(replay(final), 0);
+      assert.equal(replay(final), 0); // collector lookback
+      assert.equal(replay(next), 0); // an older staged scan finishes later
+      assert.equal(replay({ ...next, ts: final.ts }), 0); // same millisecond, smaller counters
+      assert.equal(replay({ ...final, ts: new Date(2026, 10, 19).getTime() }), 0);
+
+      const summary = await buildSummary(store, {}, 2, { now: midnight + 2000, device: 'windows' });
+      assert.deepEqual(summary.by_day_all, [
+        { d: '2026-11-17', total: 1000 }, { d: '2026-11-18', total: 500 },
+      ]);
+      assert.equal(summary.totals.today_tokens, 500);
+      assert.equal(summary.totals.all_time_tokens, 1500);
+      assert.equal(summary.totals.all_time_events, 2);
+      const secondDay = store.db.prepare(`SELECT input_tokens, cached_input, cache_write,
+        output_tokens, reasoning_tokens FROM events WHERE ts >= ?`).get(midnight);
+      assert.deepEqual({ ...secondDay }, { input_tokens: 200, cached_input: 150, cache_write: 50,
+        output_tokens: 100, reasoning_tokens: 20 });
+    });
+
     await check('排行榜上报按含今天的 UTC 7/30 自然日聚合，用量及主力模型不混入前一天', async () => {
       const store = makeStore('utc');
       const now = Date.parse('2026-10-10T13:00:00Z');
