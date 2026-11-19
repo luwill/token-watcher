@@ -18,7 +18,11 @@ import { collectQoderFile } from './collectors/qoder.js';
 import { collectDoubaoFile } from './collectors/doubao.js';
 
 const COLLECTORS = {
-  claude: async (store, args) => ({ ...(await collectClaudeFile(store, args)), state: { _v: args.version } }),
+  // 测速需要跨增量扫描记住未配对的 api-request（collectors/claude.js），state 与版本戳合并保存
+  claude: async (store, args) => {
+    const r = await collectClaudeFile(store, args);
+    return { ...r, state: { ...(r.state ?? {}), _v: args.version } };
+  },
   codex: collectCodexFile,
   zcode: collectZcodeDb,
   dsh: async (store, args) => ({ ...(await collectDshFile(store, args)), state: { _v: args.version } }), // 快照式，无跨次状态

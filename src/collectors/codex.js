@@ -4,6 +4,7 @@ import { normalizeModel } from '../models.js';
 import { quotaFromRateLimits } from '../codexQuota.js';
 import { nextUsage, usageSnapshot } from '../codexUsage.js';
 import { decompressZstdLines } from '../zstd.js';
+import { MAX_DURATION_MS } from '../speed.js';
 
 /**
  * Codex rollout 采集器（~/.codex/sessions 与 archived_sessions，2.4GB 量级）。
@@ -30,6 +31,23 @@ import { decompressZstdLines } from '../zstd.js';
  * 判不准时一律当真实请求计入：漏掉真实用量比多算一段重放更糟。
  */
 const REPLAY_GAP_MS = 500;
+
+/**
+ * 测速（近似）：rollout 不记请求发出时刻。响应终点取 token_usage_record（带 response_id，响应一结束就写）；
+ * token_count 不能当终点——它要等这次响应要求的工具跑完才落盘，排在工具输出之后（实测）。
+ * 起点取该记录之前最近一次「触发请求」的事件：轮次开始、用户消息、工具输出回填，或上一次响应记录
+ * （模型连续多步时下一请求紧接着发出）。没有响应记录的旧版 rollout 不记耗时。
+ * 触发行可能很大（工具输出），只在行首里认类型和时间，不整行 JSON.parse。
+ */
+const REQUEST_TRIGGER_HEAD = 400;
+const REQUEST_TRIGGER = /"type":"(?:task_started|user_message|function_call_output|custom_tool_call_output)"/;
+const LINE_TS = /^\{"timestamp":"([^"]+)"/;
+
+function requestTriggerTs(line) {
+  const head = line.slice(0, REQUEST_TRIGGER_HEAD);
+  if (!REQUEST_TRIGGER.test(head)) return NaN;
+  return Date.parse(LINE_TS.exec(head)?.[1] ?? '');
+}
 
 /**
  * 这一行是否仍属于文件开头的重放段。st.replay 是窗口锚点：
@@ -75,6 +93,8 @@ export async function collectCodexFile(store, { path, fileId, offset, state, ver
       if (line.includes('"type":"compacted"')) { st.record.compacted = true; return; }
       st.record = null;
     }
+    const triggeredAt = requestTriggerTs(line);
+    if (Number.isFinite(triggeredAt)) { st.reqStart = triggeredAt; return; }
     if (!line.includes('"token_count"') &&
         !line.includes('"token_usage_record"') &&
         !line.includes('"thread_settings_applied"') &&
@@ -88,6 +108,10 @@ export async function collectCodexFile(store, { path, fileId, offset, state, ver
     const ts = rec.timestamp ? Date.parse(rec.timestamp) : NaN;
 
     if (rec.type === 'token_usage_record') {
+      if (Number.isFinite(ts)) {
+        st.timing = Number.isFinite(st.reqStart) ? { start: st.reqStart, end: ts } : null;
+        st.reqStart = ts; // 没有工具调用时，下一次请求紧接着这次响应发出
+      }
       // 没有 response_id 就没法跨文件去重，不记
       if (payload.usage && payload.response_id && Number.isFinite(ts)) {
         st.record = { ts, id: payload.response_id, usage: usageSnapshot(payload.usage), sid: payload.session_id ?? null, compacted: false };
@@ -127,6 +151,8 @@ export async function collectCodexFile(store, { path, fileId, offset, state, ver
     if (payload.type === 'token_count') {
       const info = payload.info;
       if (!info?.total_token_usage || !Number.isFinite(ts)) return;
+      const timing = st.timing;
+      st.timing = null; // 一次响应记录只配一个 token_count
       const replayed = inReplay(st, ts);
 
       // 重放行的配额是父会话当年的快照，却盖着分叉时刻：按 ts 取最新会把它当成当前值
@@ -147,7 +173,10 @@ export async function collectCodexFile(store, { path, fileId, offset, state, ver
 
       st.seq++;
       // 文件内单调序号，重放幂等
-      inserted += insert(ts, d, payload.session_id, `codex:${path}:${st.seq}`);
+      const key = `codex:${path}:${st.seq}`;
+      inserted += insert(ts, d, payload.session_id, key);
+      const ms = timing ? timing.end - timing.start : NaN;
+      if (ms > 0 && ms <= MAX_DURATION_MS) store.noteDuration('codex', key, ms);
     }
   };
 

@@ -48,7 +48,9 @@ export const SOURCES = [
     roots: [join(HOME, '.claude/projects'), ...coworkRoots(HOME)],
     kind: 'jsonl',
     collector: 'claude',
-    version: 3, // v3: Cowork discovery/audit fallback and cross-format message identity
+    // v3: Cowork discovery/audit fallback and cross-format message identity
+    // v4: 测速——配对 api-request 与回复，补记 duration_ms；升版让存量会话重扫回填耗时
+    version: 4,
     match: matchClaudeFile,
     descend: descendClaudeDir,
     subscription: true,
@@ -61,7 +63,8 @@ export const SOURCES = [
     collector: 'claude',
     // v3: 网关不写 requestId，一次响应的多个 content block 塌成同一 dedup_key，
     // 输出曾被钉死在首个分片的 0；修复后需全量重扫补正存量行
-    version: 3,
+    // v4: 测速——同 claude-code，回填 duration_ms
+    version: 4,
     apiBilled: true, // 路由器用你自己的各厂商 API key，用量计入余额对账
   },
   {
@@ -72,7 +75,8 @@ export const SOURCES = [
     collector: 'codex',
     // v4: 子代理/分叉文件开头重放的父会话历史不再计入；单次用量改取 last_token_usage。
     // v5: 识别 .jsonl.zst/.jsonl.zstd 快照；路径后缀归一后与普通及归档副本共用去重键。
-    version: 5,
+    // v6: 测速——按触发事件推算请求起点，补记 duration_ms（近似值）
+    version: 6,
     match: (name) => name.endsWith('.jsonl') || name.endsWith('.jsonl.zst') || name.endsWith('.jsonl.zstd'),
     subscription: true,
   },

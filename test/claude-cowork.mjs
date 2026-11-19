@@ -80,8 +80,8 @@ export async function testClaudeCowork(ok) {
         env: {}, readDir: () => { throw new Error('absent'); } }).length, 1);
       assert.deepEqual(coworkRoots('/home/test', { platform: 'linux' }), []);
     });
-    await check('Default config registers this platform Cowork roots and v3', () => {
-      assert.equal(source.version, 3);
+    await check('Default config registers this platform Cowork roots and v4', () => {
+      assert.equal(source.version, 4); // v4: 测速回填 duration_ms
       for (const p of coworkRoots(process.env.HOME)) assert(source.roots.includes(p));
     });
     await check('Discovery accepts hidden transcript/audit; excludes generated files and prunes outputs/plugins', () => {

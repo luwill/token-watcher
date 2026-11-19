@@ -302,3 +302,13 @@ footer {
 .alert-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
 .alert-rule input[type="number"] { width: 110px; }
 .q-fill.lv-neutral { background: var(--dim); }
+
+/* 模型测速 */
+.speed-panel { margin-top: 16px; }
+.speed-panel td.ellip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spd { position: relative; min-width: 140px; height: 20px; display: flex; align-items: center; }
+.spd-bar { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 3px; background: color-mix(in srgb, var(--good) 35%, transparent); }
+.spd-bar.approx { background: color-mix(in srgb, var(--dim) 30%, transparent); }
+.spd span { position: relative; padding-left: 6px; font-variant-numeric: tabular-nums; }
+.speed-note { font-size: 11.5px; margin-top: 8px; line-height: 1.6; }
+#speed { overflow-x: auto; }

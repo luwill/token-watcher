@@ -221,6 +221,7 @@ token-watcher extra-roots remove claude-code ~/mirror/home-pc/claude/projects
 - **统计面板**：指标卡、近一年 GitHub 风格日历热力图（每日/每周/累计）、按天/模型/工具图表、最近请求实时流
 - **会话钻取**：点击趋势图任意一天 → 会话列表（峰值上下文估算）→ 单会话逐请求 token 曲线
 - **工具活动**：四源工具调用频次榜
+- **模型测速**：按模型显示单次请求耗时与输出速度（中位数 / P90，tok/s），全部从本地日志推算、不额外发请求。Claude Code / ccmr 由 `api-request` 到回复写完实测；Codex 按上一个事件推算，标「≈」
 - **配额**：Codex 官方配额直读（百分比/重置倒计时）、**Claude 官方配额**（复用 Claude Code
   本地 OAuth 凭证调官方用量端点，5 小时窗/周窗/模型专属周额度；无凭证时自动回落 5h 窗口推算）
   Statuspage 公开接口，5 分钟刷新；厂商挂没挂一眼可辨）

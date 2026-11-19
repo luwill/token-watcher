@@ -1,3 +1,4 @@
+import { modelSpeed } from './speed.js';
 import { defaultAlertsConfig, validateAlertsConfig, loadAlertsConfig, saveAlertsConfig, alertsView } from './alerts.js';
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
@@ -421,7 +422,7 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
     const device = parseDevice(url.searchParams.get('device') ?? 'all');
-    const usageRoute = ['/api/summary', '/api/sessions', '/api/tool-activity', '/api/export.csv'].includes(p)
+    const usageRoute = ['/api/summary', '/api/sessions', '/api/tool-activity', '/api/speed', '/api/export.csv'].includes(p)
       || p.startsWith('/api/session/');
     if (usageRoute && device === null) return json(res, 400, { error: 'invalid device' });
 
@@ -499,6 +500,13 @@ export function startServer({ store, scanner, balancePoller, claudePoller, curso
         FROM events WHERE session_id = ? ${tool ? 'AND tool = ?' : ''} ORDER BY ts LIMIT 5000`)
         .all(...(tool ? [sid, tool] : [sid]));
       return json(res, 200, { session_id: sid, tool: tool || null, device, events: rows });
+    }
+    if (p === '/api/speed') {
+      const days = parseRangeDays(url.searchParams.get('days'));
+      const rows = deviceDb(db_safe(store), device).prepare(`
+        SELECT model, tool, output_tokens, duration_ms FROM events
+        WHERE ts >= ? AND duration_ms IS NOT NULL AND model IS NOT NULL`).all(localRangeStart(days));
+      return json(res, 200, { days, device, models: modelSpeed(rows) });
     }
     if (p === '/api/tool-activity') {
       const days = parseRangeDays(url.searchParams.get('days'));

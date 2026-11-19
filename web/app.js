@@ -14,6 +14,7 @@ let device = 'all';
 let summaryRequest = 0;
 let sessionsRequest = 0;
 let toolsRequest = 0;
+let speedRequest = 0;
 let topView = 'overview';
 let heatMode = 'd';
 let lastSummary = null;
@@ -181,6 +182,7 @@ function render() {
   safe('heat', () => renderHeatmap(s.by_day_all));
   safe('feed', () => renderFeed(s.recent));
   safe('toolsAct', () => renderToolActivity());
+  safe('speed', () => renderSpeed());
   safe('sessions', () => loadSessions());
 }
 
@@ -1222,3 +1224,45 @@ async function saveAlertSettings(restore = false) {
 }
 document.getElementById('alerts-save').addEventListener('click', () => saveAlertSettings());
 document.getElementById('alerts-reset').addEventListener('click', () => saveAlertSettings(true));
+
+
+/* ---------- 模型测速：日志推算的单次请求耗时与输出速度（/api/speed） ---------- */
+/** 毫秒 → "820ms" / "4.2s" / "1m05s" */
+function fmtDuration(ms) {
+  if (ms == null) return '-';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+}
+async function renderSpeed() {
+  const request = ++speedRequest;
+  const host = document.getElementById('speed');
+  try {
+    const res = await fetch(usageUrl('/api/speed', { days }, device));
+    if (!res.ok) throw new Error(`服务返回 ${res.status}`);
+    const { models } = await res.json();
+    if (request !== speedRequest) return;
+    document.getElementById('speed-range').textContent = days ? `近 ${days} 天` : '全部';
+    if (!models?.length) {
+      host.innerHTML = '<div class="empty-note">所选范围内没有可测速的请求（需较新的 Claude Code / ccmr 或 Codex 日志）</div>';
+      return;
+    }
+    const maxTps = Math.max(...models.map(m => m.median_tps || 0), 1);
+    const approx = (m, v) => (m.approx && v !== '-' ? `≈${v}` : v);
+    host.innerHTML = `<table>
+      <thead><tr><th>模型</th><th>来源</th><th class="num">请求</th><th>输出速度 中位</th><th class="num">P90 速度</th><th class="num">耗时 中位</th><th class="num">耗时 P90</th></tr></thead>
+      <tbody>${models.map(m => `<tr>
+        <td class="ellip" title="${esc(m.model)}">${esc(prettyModel(m.model))}</td>
+        <td>${m.tools.map(t => `<span class="badge ${esc(t)}">${esc(TOOL_LABEL[t] || t)}</span>`).join(' ')}</td>
+        <td class="num">${fmt(m.requests)}</td>
+        <td><div class="spd"><div class="spd-bar${m.approx ? ' approx' : ''}" style="width:${((m.median_tps || 0) / maxTps * 100).toFixed(1)}%"></div>
+          <span>${m.median_tps == null ? '-' : esc(approx(m, `${m.median_tps} tok/s`))}</span></div></td>
+        <td class="num">${m.p90_tps == null ? '-' : esc(approx(m, String(m.p90_tps)))}</td>
+        <td class="num">${esc(approx(m, fmtDuration(m.median_ms)))}</td>
+        <td class="num">${esc(approx(m, fmtDuration(m.p90_ms)))}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (err) {
+    if (request === speedRequest) host.innerHTML = `<div class="empty-note">测速数据加载失败：${esc(err.message)}</div>`;
+  }
+}

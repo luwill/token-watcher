@@ -182,7 +182,7 @@ export async function testCodexZstd(ok) {
         assert.equal(events(store).reduce((sum, e) => sum + e.total_tokens, 0), a.total_tokens + b.total_tokens);
         assert.equal(calls(store).length, 1);
         assert(store.db.prepare("SELECT state_json FROM files WHERE tool='codex'").all()
-          .every(row => JSON.parse(row.state_json)._v === 5));
+          .every(row => JSON.parse(row.state_json)._v === codex.version));
         store.close();
       });
     }

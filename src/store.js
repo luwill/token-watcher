@@ -99,6 +99,8 @@ function migrate(db, dbPath) {
   // Antigravity: 0=历史未知，1=字符估算，2=真实上下文+估算输出，3=逐轮真实 usage。
   // claude-code: 1=audit 回退，2=标准 transcript；旧 0 行来自原标准解析器。
   if (!cols.includes('usage_quality')) db.exec('ALTER TABLE events ADD COLUMN usage_quality INTEGER NOT NULL DEFAULT 0');
+  // 模型测速：单次请求耗时（毫秒）。只有日志能推出请求起点的源才有值，其余为 NULL（见 speed.js）
+  if (!cols.includes('duration_ms')) db.exec('ALTER TABLE events ADD COLUMN duration_ms INTEGER');
   const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_session'").get();
   if (!idx) db.exec('CREATE INDEX idx_events_session ON events(session_id)'); // 会话钻取/模型回填高频查询
   // v2 模型归一：大小写变体合并（GLM-5.3-Flash → glm-5.3-flash）
@@ -118,7 +120,7 @@ function migrate(db, dbPath) {
 
 /** 采集器可能调用的全部写方法：stageWrites() 代理这些，其余（读）直通 */
 const STAGED_WRITES = ['insertEvent', 'insertDshEvent', 'insertToolCall', 'insertCredit',
-  'saveQuota', 'dropStaleCodexRows', 'dropStaleDoubaoEvents', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent'];
+  'saveQuota', 'dropStaleCodexRows', 'dropStaleDoubaoEvents', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent', 'noteDuration'];
 
 export class Store {
   constructor(dbPath) {
@@ -180,6 +182,8 @@ export class Store {
       INSERT INTO quota (tool, ts, data) VALUES (?, ?, ?)
       ON CONFLICT(tool) DO UPDATE SET ts = excluded.ts, data = excluded.data
       WHERE excluded.ts > quota.ts`); // 只接受更新的快照，扫描顺序无关
+    this._noteDuration = this.db.prepare(
+      'UPDATE events SET duration_ms = ? WHERE dedup_key = ? AND (duration_ms IS NULL OR duration_ms < ?)');
     installDeviceTracking(this);
   }
 
@@ -335,6 +339,16 @@ export class Store {
       return inserted;
     };
     return { store: staged, replay, get changed() { return changed; } };
+  }
+
+  /**
+   * 给已入库的事件补记请求耗时。只增不减：Claude Code 一次响应按 content block 分多行落盘，
+   * 每行都会报一次「到此为止的耗时」，最后一块（最大值）才是整次请求的耗时。
+   */
+  noteDuration(tool, dedupKey, ms) {
+    if (!Number.isSafeInteger(ms) || ms <= 0) return 0;
+    const key = tool === 'codex' ? canonicalCodexKey(dedupKey) : dedupKey;
+    return this._noteDuration.run(ms, key, ms).changes;
   }
 
   insertToolCall(e) {

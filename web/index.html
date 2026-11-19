@@ -115,6 +115,13 @@
     </div>
   </section>
 
+  <section class="panel speed-panel" id="speed-panel">
+    <h2 class="panel-head"><span>模型测速 <span class="dim" style="font-weight:400" id="speed-range"></span></span></h2>
+    <div id="speed"></div>
+    <p class="dim speed-note">数据来自日常请求本身，不额外发请求。耗时 = 请求发出到回复写完；输出速度 = 输出 tokens ÷ 耗时（含首字等待，输出少于 20 tokens 的请求不计速度）。
+      Claude Code / ccmr 为实测；标 ≈ 的 Codex 起点按上一个事件推算，含工具回填等待，偏慢。</p>
+  </section>
+
   <footer class="dim">
     <div class="foot-src">数据源：Claude Code · ccmr · Codex · ZCode · dsh · WorkBuddy · Grok Build · Pi · OpenCode · <span title="Antigravity 优先读取日志中的真实 token 用量；旧日志缺少用量字段时，按完整上下文和字符估算。">Antigravity</span> · Kimi Code · Qoder · Cursor · 豆包 · <span title="豆包工作（桌面 App）的 Token 用量，读取其 IndexedDB 快照。">豆包工作</span></div>
     <div>本地解析，实时监听 · 更新于 <span id="gen"></span></div>

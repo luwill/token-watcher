@@ -163,6 +163,7 @@ your own data dir.
 - **Incremental collection**: byte cursors / sqlite watermarks / snapshot re-parse; dedup keys make rescans idempotent; collector versioning auto-backfills on logic upgrades
 - **Dashboard**: metric cards, year-long GitHub-style heatmap (daily/weekly/cumulative), by-day/model/tool charts, live request feed
 - **Session drill-down**: click any day → sessions (peak-context estimate) → per-request token curve
+- **Model speed**: per-model request latency and output speed (median / P90 tok/s), derived from your own logs — no extra requests. Claude Code / ccmr are measured from `api-request` → response; Codex is approximated from the preceding event and marked ≈
 - **Quotas**: Codex official (direct-read), Claude official (local OAuth token → official usage endpoint; falls back to 5h window estimation)
 - **Subscription ROI**: this month's API-equivalent cost vs what you actually pay (configure prices in `~/.tokenmeter/subscriptions.json`; `token-watcher roi`)
 - **Balances & costs**: DeepSeek/Kimi balance polling; user prices → verified official prices and source-specific aliases → LiteLLM fallback, with CNY conversion; **balance reconciliation**; Qoder credits ledger

@@ -12,6 +12,7 @@ src/
   scanner.js             按源类型枚举 + 增量扫描 + FSEvents + 版本回填 + resume链模型继承
   server.js              HTTP API + SSE + 健康计算 + Claude 5h 推算 + 每日备份
   alerts.js              告警规则校验 / 原子配置存储 / 纯函数求值（web 与菜单栏共用）
+  speed.js               模型测速：按模型汇总 duration_ms → 耗时 / 输出速度中位数与 P90
   balance.js             厂商余额轮询（DeepSeek/Kimi）
   pricing.js             ccmr 费用折算 + 余额对账
   rates.js               WorkBuddy 积分费率自学习（最小二乘）
@@ -358,3 +359,23 @@ Codex 取窗口最大已用比例，余额按 id/provider 分键，Claude 5h 只
 `GET /api/alerts/config` 返回当前与默认配置；`PUT` 校验完整配置、临时文件写入后 rename，
 成功推一次现有 SSE update。沿用 Host 防护，额外检查 Origin、JSON 类型及 64 KiB 请求体上限。
 Swift 容忍缺失/损坏 alerts 和坏单项，保留同 key 级别上升通知、消失重置语义。
+
+## 模型测速
+
+不主动发请求，耗时全部从日志推出，存在 `events.duration_ms`（只增不减的 `Store.noteDuration`，
+NULL 表示该源推不出请求起点）。`/api/speed?days&device` 由 `speed.js` 的 `modelSpeed()` 汇总：
+每个模型给请求数、输出速度（output_tokens ÷ 耗时）与耗时的中位数和 P90。输出不足 20 tokens 的请求
+只计耗时、不计速度；耗时超出 (0, 15 分钟] 的样本丢弃。
+
+- **Claude Code / ccmr（实测）**：较新的 Claude Code 在每次请求前写一行 `type=api-request`（`id` + 发出时刻），
+  回复的每个 content block 带 `requestRef` 指回它。耗时 = block 落盘时刻 − 请求发出时刻，按块取最大（末块）。
+  api-request 行带完整请求参数，只在行首 1 KiB 内正则取 `id`/`timestamp`，不整行 JSON.parse。
+  请求与回复可能被切进两次增量扫描，未配对的请求经 `files.state_json.reqs` 随游标持久化；
+  收尾时只留离文件最新一行不到 15 分钟的请求（更早的已不可能配对），再以 200 条封顶。
+  老版本日志没有 api-request / requestRef，这些请求没有耗时。
+- **Codex（近似）**：rollout 只记响应完成（`token_count`），不记请求发出。起点取最近一个触发事件：
+  `task_started`、`user_message`、`function_call_output`、`custom_tool_call_output`，或上一次 `token_count`
+  （模型连续多步时下一请求紧接着发出）。起点会落在工具回填之后、请求真正发出之前，耗时偏大、速度偏低，
+  网页标「≈」。压缩调用与开头重放段不记耗时。
+
+采集器版本 claude-code/ccmr v4、codex v6 用于让存量日志重扫回填耗时（一次性成本，dedup 幂等）。
