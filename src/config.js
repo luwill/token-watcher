@@ -210,6 +210,18 @@ export const SOURCES = [
     version: 1,
     subscription: true,
   },
+  {
+    tool: 'hermes',
+    label: 'Hermes',
+    // Hermes Agent（Nous Research）：~/.hermes/state.db 的 session_model_usage（用量，原地累加，
+    // 按 last_seen 水位）+ messages.tool_name（工具调用）。粒度为会话×模型×任务级聚合，
+    // 上游不暴露逐请求明细（messages.token_count 全 0），如实呈现不造假。
+    roots: [join(HOME, '.hermes/state.db')],
+    kind: 'sqlite',
+    collector: 'hermes',
+    version: 1,
+    watchRecursive: false, // ~/.hermes 顶层含 venv/缓存等数 GB 内容，只监听直接子项（-wal 在内）
+  },
 ];
 
 /**

@@ -8,7 +8,7 @@
 
 > 截图为真实运行数据（厂商余额与项目名已脱敏为 ••••）。
 
-## 支持的工具（15 源）
+## 支持的工具（16 源）
 
 | 工具 | 数据位置 | 能看到什么 |
 |---|---|---|
@@ -20,6 +20,7 @@
 | WorkBuddy | `~/.WorkBuddy/projects` | 逐请求明细 + **积分费率自学习**（credit 账本 × token 最小二乘） |
 | Grok Build | `~/.grok/sessions` | 轮次用量明细（含厂商侧成本刻度）、工具调用 |
 | Pi | `~/.pi/agent/sessions` | 逐请求明细、工具调用（会话 JSONL 自带 USD 成本明细） |
+| Hermes Agent | `~/.hermes/state.db` | 会话与模型累计用量、工具调用。每次观测到的增量按源数据更新的本地日期入账。 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 逐请求明细（message 表）、工具调用 |
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | 新版逐轮真实输入/缓存/输出；旧日志按完整上下文和字符估算 |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | 逐轮明细（step.end 用量，camelCase/Anthropic/OpenAI 兼容三形状自适应） |
@@ -205,7 +206,10 @@ token-watcher extra-roots remove claude-code ~/mirror/home-pc/claude/projects
 
 **Node ≥ 22.13**（`node:sqlite` 自该版本起免 `--experimental-sqlite` flag，零原生依赖）。
 
-**dsh 源需要系统 `zstd`**（`brew install zstd`）。dsh 的会话快照是追加式多帧写入，
+**dsh 源需要系统 `zstd`**。dsh 的会话快照是追加式多帧写入，必须用外部 zstd CLI 解压：
+- macOS：`brew install zstd`
+- Windows：`scoop install zstd` 或 `choco install zstd`，或从 [facebook/zstd releases](https://github.com/facebook/zstd/releases) 下载 `zstd.exe` 加入 PATH
+- Linux：`apt-get install -y zstd` / `dnf install -y zstd` / `pacman -S zstd`
 单个文件可达数千帧，而 Node 内置的 zstd 只解第一帧就结束且不报错，因此这里以外部
 `zstd` 为准，仅在确认文件只含单帧时才回落内置实现。未安装且遇到多帧文件时，该源会在
 健康自检里报错，而不是静默少算。其余数据源不需要它。

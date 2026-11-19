@@ -519,6 +519,41 @@ let DOUBAO_GOLD = null, DOUBAO_REWRITE = []; // 豆包/豆包工作黄金数字�
     o.close();
   }
 
+  // Hermes：sqlite（state.db）。session_model_usage 是「按 (session, model, provider, task,
+  // billing_mode, billing_base_url) 聚合、原地累加更新」的行（实测 175 行全部满足该 6 键唯一，
+  // 4 键会撞 11 行）；messages.tool_name 非空行是工具调用（id 为 AUTOINCREMENT，rowid 永不复用）。
+  // last_seen/timestamp 是 epoch 秒（REAL），入库须 ×1000。
+  const hdir = join(HOME, '.hermes');
+  mkdirSync(hdir, { recursive: true });
+  {
+    const h = new DatabaseSync(join(hdir, 'state.db'));
+    h.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)`);
+    h.exec(`CREATE TABLE session_model_usage (session_id TEXT, model TEXT, billing_provider TEXT,
+      billing_base_url TEXT, billing_mode TEXT, task TEXT, api_call_count INTEGER,
+      input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+      reasoning_tokens INTEGER, estimated_cost_usd REAL, actual_cost_usd REAL,
+      cost_status TEXT, cost_source TEXT, first_seen REAL, last_seen REAL)`);
+    h.exec(`CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+      role TEXT NOT NULL, tool_name TEXT, timestamp REAL NOT NULL)`);
+    h.prepare(`INSERT INTO sessions VALUES ('s-hm', '/work/projJ')`).run();
+    // 正常聚合行：total=200+400+40+60=700；reasoning 5 只作信息列——误加进 total 会变 705，此数即防线
+    h.prepare(`INSERT INTO session_model_usage VALUES ('s-hm','Qwen3.8-Max','custom','https://api.example.com/v1','',
+      '',3,200,60,400,40,5,0,0,NULL,NULL,?,?)`).run((NOW - 20000) / 1000, (NOW - 20000) / 1000);
+    // 同 (session,model,provider,task) 但 billing_base_url 不同：4 键去重会把两行塌成一行，
+    // 6 键身份才能都保留（实测真实库中这种撞键有 11 处）
+    h.prepare(`INSERT INTO session_model_usage VALUES ('s-hm','Qwen3.8-Max','custom','https://api2.example.com/v1','',
+      '',1,100,0,0,0,0,0,0,NULL,NULL,?,?)`).run((NOW - 19000) / 1000, (NOW - 19000) / 1000);
+    // 全 0 用量行：跳过不入事件
+    h.prepare(`INSERT INTO session_model_usage VALUES ('s-hm','Qwen3.8-Max','custom','https://api.example.com/v1','',
+      'title_generation',1,0,0,0,0,0,0,0,NULL,NULL,?,?)`).run((NOW - 18000) / 1000, (NOW - 18000) / 1000);
+    h.prepare(`INSERT INTO messages (session_id, role, tool_name, timestamp) VALUES ('s-hm','assistant','terminal',?)`)
+      .run((NOW - 19500) / 1000);
+    // 非工具消息（tool_name NULL）不产生 tool_call
+    h.prepare(`INSERT INTO messages (session_id, role, tool_name, timestamp) VALUES ('s-hm','assistant',NULL,?)`)
+      .run((NOW - 19400) / 1000);
+    h.close();
+  }
+
   // dsh：zstd 压缩的会话快照。v3 换了记录结构（assistant/chunk → assistant/message，
   // data.chunk.usage → data.usage），旧采集器一条也匹配不上且不报错——2026-08-14
   // 起整源静默归零。两种格式各造一份，确保新格式能解析且旧格式不被改坏。
@@ -715,6 +750,8 @@ let DOUBAO_GOLD = null, DOUBAO_REWRITE = []; // 豆包/豆包工作黄金数字�
 
 // dsh 夹具是否落地，决定其黄金数字是否计入（无 zstd 时该源整体缺席）
 const DSH_T = hasDsh ? 1800 : 0, DSH_N = hasDsh ? 2 : 0;
+// Hermes 夹具黄金数：700（聚合行1）+ 100（聚合行2，同4键不同 base_url）；全 0 行不入事件
+const HERMES_GOLD = 800, HERMES_N = 2;
 
 // 离线：回归测试不该依赖公网（汇率/LiteLLM 牌价），否则断网就跑不了、时长也不可控。
 // USERPROFILE 是 Windows 上 os.homedir() 认的变量，只设 HOME 在那边临时家目录不生效。
@@ -767,6 +804,16 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('pi 2 事件（同 id 重复行 dedup）', byTool.pi?.n === 2, JSON.stringify(byTool.pi));
   ok('opencode 700（user 消息无 tokens 不入库）', byTool.opencode?.t === 700, JSON.stringify(byTool.opencode));
   ok('opencode 1 事件', byTool.opencode?.n === 1, JSON.stringify(byTool.opencode));
+  // Hermes：聚合行口径 total=input+cache_read+cache_write+output；reasoning 5 若被误加会变 705。
+  // 两行有效聚合（700 + 100，6 键身份不同）；全 0 行跳过。
+  ok('hermes 800（聚合行 700+100，全 0 行跳过，reasoning 不重复计入）', byTool.hermes?.t === 800, JSON.stringify(byTool.hermes));
+  ok('hermes 2 事件（同 4 键不同 base_url 不塌行）', byTool.hermes?.n === 2, JSON.stringify(byTool.hermes));
+  ok('hermes 模型归一化（Qwen3.8-Max → qwen3.8-max）',
+    q("SELECT model FROM events WHERE tool='hermes'").every(r => r.model === 'qwen3.8-max'),
+    JSON.stringify(q("SELECT model FROM events WHERE tool='hermes'")));
+  ok('hermes ts 秒→毫秒（last_seen REAL 秒 ×1000）',
+    q("SELECT ts FROM events WHERE tool='hermes'").every(r => r.ts > 1e12),
+    JSON.stringify(q("SELECT ts FROM events WHERE tool='hermes'")));
   // Kimi：wire.jsonl 三种 usage 形状 + 项目名映射
   ok('kimi 7550（camelCase 2680 + Anthropic 4020 + OpenAI 兼容 850）', byTool.kimi?.t === 7550, JSON.stringify(byTool.kimi));
   ok('kimi 3 事件（零用量跳过、重复 uuid dedup）', byTool.kimi?.n === 3, JSON.stringify(byTool.kimi));
@@ -871,7 +918,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('antigravity 非 transcript 的 jsonl 不入文件行',
     q("SELECT COUNT(*) n FROM files WHERE tool='antigravity'")[0]?.n === 3);
   const total = Object.values(byTool).reduce((s, r) => s + r.t, 0);
-  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T + 170000}`, total === 36850 + ATY_GOLD + DSH_T + 170000, String(total)); // 170000 = 豆包/豆包工作各 5 事件 × 17000
+  ok(`全源合计 ${36850 + ATY_GOLD + DSH_T + 170000 + HERMES_GOLD}`, total === 36850 + ATY_GOLD + DSH_T + 170000 + HERMES_GOLD, String(total)); // 170000 = 豆包/豆包工作各 5 事件 × 17000
 
   // 模型别名与归一
   const models = Object.fromEntries(q('SELECT model, COUNT(*) n FROM events GROUP BY model').map(r => [r.model, r.n]));
@@ -880,7 +927,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
 
   // 幂等：二次扫描不重复
   const n2 = db.prepare('SELECT COUNT(*) n FROM events').get().n;
-  ok(`事件总数 ${22 + DSH_N + 10}（幂等）`, n2 === 22 + DSH_N + 10, String(n2)); // 10 = 豆包/豆包工作各 5
+  ok(`事件总数 ${22 + HERMES_N + DSH_N + 10}（幂等）`, n2 === 22 + HERMES_N + DSH_N + 10, String(n2)); // 10 = 豆包/豆包工作各 5
 
   // tool_calls
   const tc = Object.fromEntries(q('SELECT tool, COUNT(*) n FROM tool_calls GROUP BY tool').map(r => [r.tool, r.n]));
@@ -888,6 +935,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   ok('zcode 工具调用 1', tc.zcode === 1);
   ok('pi 工具调用 1（assistant 内容里的 toolCall 块）', tc.pi === 1, String(tc.pi));
   ok('opencode 工具调用 1（part 表 type=tool）', tc.opencode === 1, String(tc.opencode));
+  ok('hermes 工具调用 1（messages.tool_name 非空行；NULL 行不计）', tc.hermes === 1, String(tc.hermes));
 
   // Codex 配额快照
   const quota = JSON.parse(db.prepare(`SELECT data FROM quota WHERE tool='codex'`).get()?.data ?? 'null');
@@ -908,6 +956,7 @@ const cli = (args) => spawnSync(process.execPath, ['--disable-warning=Experiment
   // 唯一可信来源是首行 session 记录的 cwd，须由 collector state 带过增量轮次。
   ok('pi project=projG（首行 session.cwd，非目录名反推）', proj.pi === 'projG', String(proj.pi));
   ok('opencode project=projH（session.directory）', proj.opencode === 'projH', String(proj.opencode));
+  ok('hermes project=projJ（sessions.cwd）', proj.hermes === 'projJ', String(proj.hermes));
   db.close();
 }
 
@@ -1087,14 +1136,14 @@ console.log('\n[4] API 冒烟');
     const res = await fetch(`http://127.0.0.1:${port}/api/summary?days=7`);
     const s = await res.json();
     ok('summary 200 且结构完整',
-      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T + 170000 && Array.isArray(s.by_day) && s.by_day.length >= 1
+      res.status === 200 && s.totals?.all_time_tokens === 36850 + ATY_FINAL + DSH_T + 170000 + HERMES_GOLD && Array.isArray(s.by_day) && s.by_day.length >= 1
       && Array.isArray(s.health) && s.health.length === SOURCES.length && s.costs && Array.isArray(s.costs.by_day)
       && Array.isArray(s.recent) && s.recent.length === Math.min(19 + DSH_N, 15),
       `totals=${s.totals?.all_time_tokens} health=${s.health?.length} recent=${s.recent?.length}`);
     // 健康表必须随注册表一起长——曾经它是一份硬编码工具清单，加源必漏
     ok('健康表覆盖全部注册源', s.health.length === SOURCES.length, `${s.health.length} vs ${SOURCES.length}`);
     const okTools = s.health.filter(h => h.status === 'ok').length;
-    ok(`健康 ${hasDsh ? 12 : 11} 源 ok`, okTools === (hasDsh ? 12 : 11), `${okTools} ok`);
+    ok(`健康 ${hasDsh ? 13 : 12} 源 ok`, okTools === (hasDsh ? 13 : 12), `${okTools} ok`);
     ok('官方配额字段存在（无凭证时为 null，不编造）', 'claude_usage' in (s.quota || {}));
     ok('积分账本字段存在（qoder 1.75）', s.credits?.qoder?.total === 1.75, JSON.stringify(s.credits));
     ok('summary 含订阅 ROI（6 条目）', s.roi?.configured === true && s.roi?.entries?.length === 6, JSON.stringify(s.roi?.entries?.map(e => e.tool)));
@@ -1266,6 +1315,37 @@ console.log('\n[5] 增量续写');
     ok('全量重扫不重复计数', db4.prepare("SELECT COUNT(*) n FROM events WHERE tool='opencode'").get().n === 4,
       String(db4.prepare("SELECT COUNT(*) n FROM events WHERE tool='opencode'").get().n));
     db4.close();
+  }
+}
+
+/* ---------- 5b：Hermes 聚合行原地累加增长 → 同一事件覆盖刷新，不新增行 ----------
+ * session_model_usage 是累计聚合：同一 (session,model,provider,task,mode,base_url) 行
+ * 随新请求被原地 UPDATE（token 列累加、last_seen 前移）。纯 insertEvent 的 supersede
+ * 只在「output 更大」时补齐，遇到「输入/缓存增长但输出不变」会静默丢弃增长。
+ * 必须按 last_seen 水位重读 + 覆盖式 upsert。此用例钉死该语义。 */
+{
+  const hDb = join(HOME, '.hermes', 'state.db');
+  // 把该聚合行原地累加（input +500, cache_read +300，output 不变——正是 supersede 抓不到的形态），
+  // 沿用当前 last_seen，在回看窗口内验证同日增长（不依赖测试运行时距午夜有多久）。
+  {
+    const h = new DatabaseSync(hDb);
+    h.prepare(`UPDATE session_model_usage
+        SET input_tokens = input_tokens + 500, cache_read_tokens = cache_read_tokens + 300,
+            api_call_count = api_call_count + 1
+      WHERE session_id='s-hm' AND billing_base_url='https://api.example.com/v1' AND task=''`).run();
+    h.close();
+  }
+  ok('累加增长后 scan 退出码 0', cli(['scan']).status === 0);
+  {
+    const db5 = new DatabaseSync(dbFile, { readOnly: true });
+    const rows = db5.prepare(`SELECT COUNT(*) n FROM events WHERE tool='hermes'`).get().n;
+    // 原 700（200+400+40+60）→ 增长后应为 700+500+300=1500（output 60 不变）
+    const bumped = db5.prepare(`SELECT total_tokens t, input_tokens i, cached_input c, output_tokens o
+      FROM events WHERE tool='hermes' AND session_id='s-hm' AND cached_input >= 700 ORDER BY total_tokens DESC`).get();
+    ok('原地累加刷新同一事件，未新增行（仍 2 事件）', rows === 2, String(rows));
+    ok('input/cache 增长被覆盖刷新（output 不变也生效，非 supersede 语义）',
+      bumped?.i === 700 && bumped?.c === 700 && bumped?.o === 60 && bumped?.t === 1500, JSON.stringify(bumped));
+    db5.close();
   }
 }
 

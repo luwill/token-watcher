@@ -15,6 +15,9 @@ export const TOOL_COLORS = {
   // （protan 5.92 / deutan 4.50），全部 ≥4.5 可区分区间，兄弟对 doubao/doubaowork 各向 ≥11.4。
   // 完整校验记录见 docs/evidence/stage1。
   'doubao': '#1d6cff', 'doubaowork': '#5c8fd0',
+  // hermes(#d946ef 品红)：在深色底上对全集 14 色算 CIEDE2000（含红盲/绿盲模拟），
+  // 加入后正常视觉最差配对仍是原有的 cursor/zcode ΔE 8.88（未被拉低），满足"不比现状更差"。
+  'hermes': '#d946ef',
 };
 
 export const TOOL_LABEL = {
@@ -23,6 +26,7 @@ export const TOOL_LABEL = {
   'pi': 'Pi', 'opencode': 'OpenCode',
   'antigravity': 'Antigravity', 'kimi': 'Kimi Code', 'qoder': 'Qoder', 'cursor': 'Cursor',
   'doubao': '豆包', 'doubaowork': '豆包工作',
+  'hermes': 'Hermes',
 };
 
 // 深色底 #14141c 上经 validate_palette.js 校验的 8 槽分类色板：

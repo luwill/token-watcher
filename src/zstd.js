@@ -7,6 +7,25 @@ const execFileP = promisify(execFile);
 const ZSTD_BINS = ['zstd', '/opt/homebrew/bin/zstd', '/usr/local/bin/zstd', '/usr/bin/zstd'];
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
+/**
+ * 跨平台「如何安装 zstd」提示。dsh 多帧会话必须用外部 zstd CLI 解压，
+ * 但旧报错只给了 macOS 的 `brew install zstd`，Windows/Linux 用户无解。
+ * 这里按 process.platform 给出对应包管理器命令或官方二进制下载地址。
+ */
+export function zstdInstallHint() {
+  switch (process.platform) {
+    case 'win32':
+      return '请安装 zstd：scoop install zstd 或 choco install zstd；也可从 https://github.com/facebook/zstd/releases 下载 zstd.exe 并加入 PATH';
+    case 'darwin':
+      return '请安装 zstd：brew install zstd';
+    case 'linux':
+      return '请安装 zstd：apt-get install -y zstd（Debian/Ubuntu）｜ dnf install -y zstd（Fedora）｜ pacman -S zstd（Arch）';
+    default:
+      return '请通过系统包管理器安装 zstd';
+  }
+}
+
+
 /** Decompress a complete zstd stream, including concatenated frames. */
 export async function decompressZstd(path, { bins = ZSTD_BINS } = {}) {
   for (const bin of bins) {
@@ -35,11 +54,11 @@ export async function decompressZstd(path, { bins = ZSTD_BINS } = {}) {
       } catch { /* A magic-like sequence inside the frame payload is not a frame boundary. */ }
       idx = buf.indexOf(ZSTD_MAGIC, idx + 1);
     }
-    if (multi) throw new Error(`${path} 含多个 zstd 帧，Node 内置实现只能解第一帧。请安装 zstd：brew install zstd`);
+    if (multi) throw new Error(`${path} 含多个 zstd 帧，Node 内置实现只能解第一帧。${zstdInstallHint()}`);
     return zlib.zstdDecompressSync(buf);
   }
 
-  throw new Error('zstd 不可用：PATH 与常见安装路径下均无 zstd，请执行 brew install zstd');
+  throw new Error(`zstd 不可用：PATH 与常见安装路径下均无 zstd。${zstdInstallHint()}`);
 }
 
 /**

@@ -30,9 +30,8 @@ aggregate statistics after you explicitly opt in.
 
 Most token trackers recompute a report when you ask. Token Watcher watches
 the logs as they're written: FSEvents → incremental parse → SSE push, the
-dashboard updates in **under a second** while your agents work. Everything is
-stored as **per-request events**, not pre-aggregated buckets — so you can
-drill from a day, to a session, to a single request's token curve.
+dashboard updates in **under a second** while your agents work. Sources with per-request records let you drill down from a day to a session
+and inspect individual requests. Hermes exposes cumulative usage by session and model.
 
 Measurement limits are documented: Antigravity reads real token usage when
 available and estimates older logs. Models without pricing show up as *unpriced*,
@@ -44,13 +43,13 @@ can see when the estimate drifts.
 | Interface | Local web dashboard + menu bar | Native apps + web | CLI reports | TUI / CLI |
 | Refresh | Real-time (FSEvents + SSE, <1s) | Hook-triggered sync | Manual run | Manual run |
 | Granularity | Per-request events | 30-min buckets | Daily | Daily |
-| Sources | 15, incl. China stack (ccmr, dsh, Qoder, Kimi Code, WorkBuddy, Doubao) | 39 | Multi-agent | Multi-agent |
+| Sources | 16, incl. China stack (ccmr, dsh, Qoder, Kimi Code, WorkBuddy, Doubao) | 39 | Multi-agent | Multi-agent |
 | Cost | LiteLLM prices + **balance reconciliation** + credits ledger | LiteLLM estimate | Estimate | Estimate |
 | Official quotas | Claude / Codex direct-read, Cursor billing CSV | 17 providers | Limited | Several |
 | Telemetry | Optional, opt-in aggregate leaderboard | Opt-out | None | None |
 | Install | One zero-dependency npm package (incl. universal menu-bar app) | npm + platform packages | npm | npm |
 
-## Supported tools (15 sources)
+## Supported tools (16 sources)
 
 | Tool | Data location | What you get |
 |---|---|---|
@@ -62,6 +61,7 @@ can see when the estimate drifts.
 | WorkBuddy | `~/.WorkBuddy/projects` | Per-request details + **self-learned credit rates** |
 | Grok Build | `~/.grok/sessions` | Per-turn usage (incl. vendor cost scale), tool calls |
 | Pi | `~/.pi/agent/sessions` | Per-request details, tool calls |
+| Hermes Agent | `~/.hermes/state.db` | Session/model usage and tool calls. Each observed increase is attributed to the local day of the source update. |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Per-request details, tool calls |
 | Antigravity | `~/.gemini/antigravity*/brain/**/transcript*.jsonl` | Real per-step input/cache/output when available; full-context and character estimates for older logs |
 | Kimi Code | `~/.kimi-code/sessions/**/wire.jsonl` | Per-turn details (3 usage shapes auto-detected) |

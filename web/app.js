@@ -78,6 +78,7 @@ const LIGHT_TOOL_COLORS = {
   'opencode': '#bc5a10', 'kimi': '#25743f', 'qoder': '#7d5236', 'cursor': '#7d6412', 'antigravity': '#4f4a5c',
   // 豆包品牌蓝加深版（白底 ≥4.5:1，浅色全集最差对保持原状，见 docs/evidence/stage1）
   'doubao': '#1b4fd6', 'doubaowork': '#2c59ad',
+  'hermes': '#a21caf',
 };
 const toolColor = (t, fallback) => (isLight() && LIGHT_TOOL_COLORS[t]) || TOOL_COLORS[t] || fallback;
 

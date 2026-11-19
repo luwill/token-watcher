@@ -16,6 +16,7 @@ import { collectAntigravityFile } from './collectors/antigravity.js';
 import { collectKimiFile } from './collectors/kimi.js';
 import { collectQoderFile } from './collectors/qoder.js';
 import { collectDoubaoFile } from './collectors/doubao.js';
+import { collectHermesDb } from './collectors/hermes.js';
 
 const COLLECTORS = {
   // 测速需要跨增量扫描记住未配对的 api-request（collectors/claude.js），state 与版本戳合并保存
@@ -34,6 +35,7 @@ const COLLECTORS = {
   kimi: collectKimiFile,         // 自带 state：config.update 的模型别名
   qoder: async (store, args) => ({ ...(await collectQoderFile(store, args)), state: { _v: args.version } }),
   doubao: async (store, args) => ({ ...(await collectDoubaoFile(store, args)), state: { _v: args.version } }), // 快照式：每个 leveldb 文件整体重解析
+  hermes: collectHermesDb,     // 自带 state：session_model_usage last_seen 水位 + messages rowid 水位
 };
 
 /**
@@ -314,8 +316,12 @@ export class Scanner extends EventEmitter {
         const watchDir = src.kind === 'sqlite' ? dirname(root) : root;
         // 目录不存在 = 用户没装这个工具，属正常情况，不该刷一行 watch failed 吓人
         if (!existsSync(watchDir)) continue;
+        // watchRecursive=false 的源（如 hermes：父目录 ~/.hermes 含 venv/缓存/日志达数 GB）
+        // 只监听父目录直接子项——其 -wal 文件本就是直接子项，无需递归整棵树（避免无关
+        // FSEvent 触发全源扫描）。周期性兜底扫描仍覆盖它。
+        const recursive = src.watchRecursive !== false;
         try {
-          const w = watchCb(watchDir, { recursive: true }, () => this._scheduleScan());
+          const w = watchCb(watchDir, { recursive }, () => this._scheduleScan());
           this._watchers.push(w);
         } catch {
           try {

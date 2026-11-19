@@ -4,6 +4,7 @@ import { canonicalCodexKey, migrateCodexKeys, offloadCodexKeyArchive } from './c
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { installDeviceTracking } from './deviceTracking.js';
+import { localDayStart } from './timeRange.js';
 
 /**
  * 归一化事件模型：
@@ -120,7 +121,10 @@ function migrate(db, dbPath) {
 
 /** 采集器可能调用的全部写方法：stageWrites() 代理这些，其余（读）直通 */
 const STAGED_WRITES = ['insertEvent', 'insertDshEvent', 'insertToolCall', 'insertCredit',
-  'saveQuota', 'dropStaleCodexRows', 'dropStaleDoubaoEvents', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent', 'noteDuration'];
+  'saveQuota', 'dropStaleCodexRows', 'dropStaleDoubaoEvents', 'correctEventInput', 'upsertAntigravityEvent', 'upsertClaudeEvent',
+  'noteDuration', 'upsertHermesEvent'];
+
+const HERMES_TOKEN_FIELDS = ['input_tokens', 'cached_input', 'cache_write', 'output_tokens', 'reasoning_tokens'];
 
 export class Store {
   constructor(dbPath) {
@@ -157,6 +161,16 @@ export class Store {
       ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
       cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?, usage_quality = ?
       WHERE dedup_key = ? AND tool = 'claude-code'`);
+    // The fixed-length aggregate key also matches the first (including legacy) bucket.
+    // ':' starts its daily suffixes; ';' is the exclusive upper bound in the unique key index.
+    this._hermesBuckets = this.db.prepare(`SELECT dedup_key, ts, model, project,
+      input_tokens, cached_input, cache_write, output_tokens, reasoning_tokens
+      FROM events WHERE dedup_key >= ? AND dedup_key < ? AND +tool = 'hermes'
+      ORDER BY ts DESC`);
+    this._updateHermesEvent = this.db.prepare(`UPDATE events SET
+      ts = ?, model = ?, session_id = ?, project = ?, input_tokens = ?, cached_input = ?,
+      cache_write = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?
+      WHERE dedup_key = ? AND tool = 'hermes'`);
     this._insertToolCall = this.db.prepare(`
       INSERT OR IGNORE INTO tool_calls (ts, tool, name, session_id, dedup_key)
       VALUES (?, ?, ?, ?, ?)`);
@@ -314,6 +328,39 @@ export class Store {
     return n;
   }
 
+  /** Attribute newly observed Hermes usage to the local day of the source snapshot. */
+  upsertHermesEvent(e) {
+    if (e.tool !== 'hermes') throw new Error('invalid Hermes event');
+    const buckets = this._hermesBuckets.all(e.dedup_key, e.dedup_key + ';');
+    const latest = buckets[0];
+    if (latest && latest.ts > e.ts) return 0; // an older scan can finish replaying later
+
+    const dayStart = localDayStart(e.ts);
+    const today = latest && latest.ts >= dayStart ? latest : null;
+    const earlier = today ? buckets.slice(1) : buckets;
+    const daily = { ...e };
+    for (const field of HERMES_TOKEN_FIELDS) {
+      const booked = earlier.reduce((sum, bucket) => sum + bucket[field], 0);
+      // last_seen is rounded to milliseconds; equal timestamps may replay out of order.
+      const floor = today?.ts === e.ts ? today[field] : 0;
+      daily[field] = Math.max(floor, (e[field] ?? 0) - booked);
+    }
+    daily.total_tokens = daily.input_tokens + daily.cached_input + daily.cache_write + daily.output_tokens;
+
+    if (!today) {
+      if (!daily.total_tokens && !daily.reasoning_tokens) return 0;
+      if (latest) daily.dedup_key = e.dedup_key + ':' + dayStart;
+      return this.insertEvent(daily); // tags the actual daily key with the source device
+    }
+    if (today.ts === e.ts && today.model === e.model && today.project === e.project &&
+        HERMES_TOKEN_FIELDS.every(field => today[field] === daily[field])) return 0;
+    this._updateHermesEvent.run(
+      e.ts, e.model ?? null, e.session_id ?? null, e.project ?? null, daily.input_tokens, daily.cached_input,
+      daily.cache_write, daily.output_tokens, daily.reasoning_tokens, daily.total_tokens, today.dedup_key,
+    );
+    return 0;
+  }
+
   /**
    * 采集器专用的写入代理：写操作先按顺序记下，解析（含异步读文件、解压）结束后由扫描器
    * 在一个同步事务里 replay()。事务因此从不跨 await——同一连接上的轮询器 / 设置写入
@@ -333,7 +380,7 @@ export class Store {
       const before = this.db.prepare('SELECT total_changes() n').get().n;
       for (const [name, args] of ops) {
         const r = this[name](...args);
-        if (['insertEvent', 'insertDshEvent', 'upsertAntigravityEvent', 'upsertClaudeEvent'].includes(name)) inserted += r;
+        if (['insertEvent', 'insertDshEvent', 'upsertAntigravityEvent', 'upsertClaudeEvent', 'upsertHermesEvent'].includes(name)) inserted += r;
       }
       changed = this.db.prepare('SELECT total_changes() n').get().n > before;
       return inserted;
