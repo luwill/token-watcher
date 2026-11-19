@@ -15,6 +15,7 @@ export async function testOfficialPricing(ok) {
     const cases = [
       ['antigravity', 'gemini-3.8-flash-n', 9.15],
       ['ccmr', 'step-5-preview', 27.7],
+      ['ccmr', 'qwen4-max', 53], // CNY 10 + 0.5 + 12.5（5min 缓存写）+ 30，不乘汇率
       ['cursor', 'claude-opus-5-5-max', 70.08],
       ['cursor', 'grok-4.7-high-fast', 34],
       ['grok', 'grok-4.7-build', 17],

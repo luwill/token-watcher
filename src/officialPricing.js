@@ -6,6 +6,7 @@ export const PRICE_SOURCES = {
   xai: 'https://docs.x.ai/developers/pricing',
   kimi: 'https://platform.kimi.com/docs/pricing/chat',
   step: 'https://platform.stepfun.com/docs/zh/guides/pricing/details',
+  qwen: 'https://help.aliyun.com/zh/model-studio/model-pricing', // 2026-11-19 核对
   tencent: 'https://cloud.tencent.com/act/pro/tokenplan',
   opencode: 'https://opencode.ai/v2/docs/console/models/',
   openrouter: 'https://openrouter.ai/api/v1/models',
@@ -50,6 +51,9 @@ export function officialPrice(model, { tool, now = Date.now(), longContext = fal
     return longContext ? usd(6, 1.5, 18, PRICE_SOURCES.xai) : usd(4, 1, 12, PRICE_SOURCES.xai);
   }
   if (id === 'kimi-k3') return cny(20, 2, 100, PRICE_SOURCES.kimi, 20); // 默认 5min cache write
+  // 百炼华北2：0–1M 输入单档，思考/非思考同价；缓存命中 0.5、5min 显式缓存写 12.5。
+  // 只认正式 ID：preview / 邀测 ID 未见官方同价说明，不臆测归并。
+  if (id === 'qwen4-max') return cny(10, 0.5, 30, PRICE_SOURCES.qwen, 12.5);
   if (id === 'hy4-preview') return cny(6, 0.3, 18, PRICE_SOURCES.tencent);
   if (id === 'step-5-preview') {
     // 旧账户 0.35 的资格不可从 token 推断，使用现行公开 0.70，资格价可手动覆盖。
