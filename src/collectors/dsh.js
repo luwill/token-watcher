@@ -3,6 +3,19 @@ import { normalizeModel } from '../models.js';
 import { decompressZstd } from '../zstd.js';
 
 /**
+ * DSH 会把本地 CLI agent（codex / antigravity / claude code / opencode / grok …）包成一个
+ * 会话，provider 形如 `local-codex-cli`、`local-antigravity`。这些 turn 的用量已经由该
+ * CLI 自己的采集器上报（codex / antigravity / claude / opencode / grok），这里再记一遍
+ * 就是整份重复：同一批 token 在 events 里出现两行，一行 tool=dsh、模型名是 CLI 的模型。
+ * 实测 2026-11-23 一天，重复量占上报总量的 42.1%。
+ *
+ * 判据用 provider 前缀：DSH 侧原生的 provider 是 `magpie`、`magpie-responses`、
+ * `deepseek-account` 这类普通名字，只有被包裹的 CLI agent 才带 `local-` 前缀。
+ */
+const isWrappedCliProvider = provider =>
+  typeof provider === 'string' && provider.startsWith('local-');
+
+/**
  * dsh（DeepSeek Harness）采集器：~/.dsh/sessions 下 zstd 压缩的会话快照。
  *
  * - 文件视为原子快照：mtime/size 变化时整体解压重解析，dedup 保证幂等。
@@ -26,10 +39,13 @@ export async function collectDshFile(store, { path, fileId }) {
   const file = basename(path);
   const requests = new Map();
   let model = null;
+  let provider = null;
   let project = null;
 
-  const record = (rec, u, legacyKey, recModel) => {
+  const record = (rec, u, legacyKey, recModel, recProvider) => {
     if (!u || !Number.isFinite(rec.time)) return;
+    // 被包裹的 CLI agent：用量归各自的 CLI 采集器，这里跳过。
+    if (isWrappedCliProvider(recProvider ?? provider)) return;
     const input = u.inputTokens || 0;
     const cached = u.cacheReadTokens || 0;
     const cacheWrite = u.cacheWriteTokens || 0;
@@ -81,11 +97,12 @@ export async function collectDshFile(store, { path, fileId }) {
     }
     if (rec.type === 'request/header') {
       model = rec.data?.header?.config?.model ?? model;
+      provider = rec.data?.header?.config?.provider ?? provider;
       continue;
     }
     if (rec.type === 'assistant/message') {
       record(rec, rec.data?.usage, `dsh:${fileId}:${file}:${rec.seq}`,
-        rec.data?.message?.source?.model);
+        rec.data?.message?.source?.model, rec.data?.message?.source?.provider);
       continue;
     }
     if (rec.type === 'assistant/chunk') {
